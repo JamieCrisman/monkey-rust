@@ -1,4 +1,4 @@
-mod ast;
+pub mod ast;
 use crate::token::Token;
 use crate::{lexer::lexer, token};
 
@@ -16,7 +16,7 @@ fn variant_eq<T>(a: &T, b: &T) -> bool {
 }
 
 impl Parser {
-    fn new(lex: lexer) -> Self {
+    pub fn new(lex: lexer) -> Self {
         let mut p = Self {
             l: lex,
             cur_token: Token::EOF,
@@ -45,41 +45,63 @@ impl Parser {
             self.next_token();
             cur_tok = self.cur_token.clone();
         }
+
         return p;
     }
 
     fn parse_statement(&mut self) -> Option<Statement> {
         match self.cur_token {
-            Token::LET => Some(self.parse_let_statement()),
-            Token::RETURN => Some(self.parse_return_statement()),
+            Token::LET => self.parse_let_statement(),
+            Token::RETURN => self.parse_return_statement(),
             _ => self.parse_expression_statement(),
         }
     }
 
-    fn parse_let_statement(&mut self) -> Statement {
-        //
-        if !self.expect_peek(Token::IDENT(String::from(""))) {
-            return Statement::Blank;
-        }
-        let ident = Ident::from(self.cur_token.clone());
-        if !self.expect_peek(Token::ASSIGN) {
-            return Statement::Blank;
+    fn parse_let_statement(&mut self) -> Option<Statement> {
+        match self.peek_token {
+            Token::IDENT(_) => self.next_token(),
+            _ => {
+                self.peek_error(Token::IDENT(String::from("any")));
+                return None;
+            }
         }
 
-        // Todo parse expression
-        while self.cur_token != Token::SEMICOLON {
+        let ident = match self.parse_ident() {
+            Some(name) => name,
+            None => return None,
+        };
+
+        if !self.expect_peek(Token::ASSIGN) {
+            return None;
+        }
+
+        self.next_token();
+
+        let expression = match self.parse_expression(Precedence::Lowest) {
+            Some(expr) => expr,
+            None => return None,
+        };
+
+        if self.peek_token == Token::SEMICOLON {
             self.next_token();
         }
-        Statement::Let(ident, Expression::Blank)
+
+        Some(Statement::Let(ident, expression))
     }
 
-    fn parse_return_statement(&mut self) -> Statement {
+    fn parse_return_statement(&mut self) -> Option<Statement> {
         self.next_token();
-        // Todo parse expression
-        while self.cur_token != Token::SEMICOLON {
+
+        let expression = match self.parse_expression(Precedence::Lowest) {
+            Some(expr) => expr,
+            None => return None,
+        };
+
+        if self.peek_token == Token::SEMICOLON {
             self.next_token();
         }
-        Statement::Return(Expression::Blank)
+
+        Some(Statement::Return(expression))
     }
 
     fn parse_expression_statement(&mut self) -> Option<Statement> {
@@ -88,7 +110,8 @@ impl Parser {
             self.next_token();
         }
         if expression.is_none() {
-            // TODO: errors
+            // TODO:
+            // self.errorserrors
             // self.errors
             //     .push(String::from("could not parse expression statement"));
             return None;
@@ -97,17 +120,19 @@ impl Parser {
     }
 
     fn parse_expression(&mut self, precedence: Precedence) -> Option<Expression> {
+        // println!("cur {:?} peek {:?}", self.cur_token, self.peek_token);
+
         let mut left_expression = match self.cur_token {
             Token::IDENT(_) => self.parse_ident_expression(),
             Token::INT(_) => self.parse_int_expression(),
-            // Token::String(_) => self.parse_string_expr(),
-            // Token::Bool(_) => self.parse_bool_expr(),
-            // Token::Lbracket => self.parse_array_expr(),
+            Token::STRING(_) => self.parse_string_expression(),
+            Token::BOOL(_) => self.parse_bool_expr(),
+            Token::LBRACKET => self.parse_array_ident_expr(),
             // Token::Lbrace => self.parse_hash_expr(),
             Token::BANG | Token::MINUS => self.parse_prefix_expression(),
-            // Token::Lparen => self.parse_grouped_expr(),
-            // Token::If => self.parse_if_expr(),
-            // Token::Func => self.parse_func_expr(),
+            Token::LPAREN => self.parse_grouped_expr(),
+            Token::IF => self.parse_if_expression(),
+            Token::FUNCTION => self.parse_func_expression(),
             _ => {
                 // self.error_no_prefix_Parser();
                 None
@@ -131,10 +156,184 @@ impl Parser {
                     self.next_token();
                     left_expression = self.parse_infix_expression(left_expression.unwrap());
                 }
+                Token::LBRACKET => {
+                    self.next_token();
+                    left_expression = self.parse_index_expr(left_expression.unwrap());
+                }
+                Token::LPAREN => {
+                    self.next_token();
+                    left_expression = self.parse_call_expression(left_expression.unwrap());
+                }
                 _ => return left_expression,
             }
         }
         left_expression
+    }
+
+    fn parse_call_expression(&mut self, func: Expression) -> Option<Expression> {
+        let args = match self.parse_expression_list(Token::RPAREN) {
+            Some(args) => args,
+            None => return None,
+        };
+
+        Some(Expression::Call {
+            func: Box::new(func),
+            args,
+        })
+    }
+
+    fn parse_func_expression(&mut self) -> Option<Expression> {
+        if !self.expect_peek(Token::LPAREN) {
+            return None;
+        }
+
+        let params = match self.parse_func_params() {
+            Some(params) => params,
+            None => return None,
+        };
+
+        if !self.expect_peek(Token::LBRACE) {
+            return None;
+        }
+
+        Some(Expression::Func {
+            params,
+            body: self.parse_block_statement(),
+        })
+    }
+
+    fn parse_array_ident_expr(&mut self) -> Option<Expression> {
+        match self.parse_expression_list(Token::RBRACKET) {
+            Some(l) => Some(Expression::Literal(Literal::Array(l))),
+            None => None,
+        }
+    }
+
+    fn parse_index_expr(&mut self, left: Expression) -> Option<Expression> {
+        self.next_token();
+
+        let index = match self.parse_expression(Precedence::Lowest) {
+            Some(expr) => expr,
+            None => return None,
+        };
+
+        if !self.expect_peek(Token::RBRACKET) {
+            return None;
+        }
+
+        Some(Expression::Index(Box::new(left), Box::new(index)))
+    }
+
+    fn parse_func_params(&mut self) -> Option<Vec<Ident>> {
+        let mut params = vec![];
+        if self.peek_token == Token::RPAREN {
+            self.next_token();
+            return Some(params);
+        }
+
+        self.next_token();
+
+        match self.parse_ident() {
+            Some(ident) => params.push(ident),
+            None => return None,
+        }
+
+        while self.peek_token == Token::COMMA {
+            self.next_token();
+            self.next_token();
+
+            match self.parse_ident() {
+                Some(ident) => params.push(ident),
+                None => return None,
+            }
+        }
+
+        if !self.expect_peek(Token::RPAREN) {
+            return None;
+        }
+
+        Some(params)
+    }
+
+    fn parse_expression_list(&mut self, end: Token) -> Option<Vec<Expression>> {
+        let mut list = vec![];
+
+        if self.peek_token == end {
+            self.next_token();
+            return Some(list);
+        }
+
+        self.next_token();
+
+        match self.parse_expression(Precedence::Lowest) {
+            Some(expr) => list.push(expr),
+            None => return None,
+        }
+
+        while self.peek_token == Token::COMMA {
+            self.next_token();
+            self.next_token();
+
+            match self.parse_expression(Precedence::Lowest) {
+                Some(expr) => list.push(expr),
+                None => return None,
+            }
+        }
+
+        if !self.expect_peek(end) {
+            return None;
+        }
+
+        Some(list)
+    }
+
+    fn parse_block_statement(&mut self) -> BlockStatement {
+        self.next_token();
+        let mut block = vec![];
+        while self.cur_token != Token::RBRACE && self.cur_token != Token::EOF {
+            match self.parse_statement() {
+                Some(stmt) => block.push(stmt),
+                None => {}
+            }
+            self.next_token();
+        }
+
+        block
+    }
+
+    fn parse_if_expression(&mut self) -> Option<Expression> {
+        if !self.expect_peek(Token::LPAREN) {
+            return None;
+        }
+
+        self.next_token();
+
+        let cond = match self.parse_expression(Precedence::Lowest) {
+            Some(expr) => expr,
+            None => return None,
+        };
+
+        if !self.expect_peek(Token::RPAREN) || !self.expect_peek(Token::LBRACE) {
+            return None;
+        }
+
+        let consequence = self.parse_block_statement();
+        let mut alternative = None;
+
+        if self.peek_token == Token::ELSE {
+            self.next_token();
+            if !self.expect_peek(Token::LBRACE) {
+                return None;
+            }
+
+            alternative = Some(self.parse_block_statement());
+        }
+
+        Some(Expression::If {
+            condition: Box::new(cond),
+            consequence,
+            alternative,
+        })
     }
 
     fn parse_infix_expression(&mut self, left: Expression) -> Option<Expression> {
@@ -179,11 +378,33 @@ impl Parser {
         }
     }
 
+    fn parse_bool_expr(&mut self) -> Option<Expression> {
+        match self.cur_token {
+            Token::BOOL(val) => Some(Expression::Literal(Literal::Bool(val))),
+            _ => None,
+        }
+    }
+
     fn parse_int_expression(&mut self) -> Option<Expression> {
         match self.cur_token {
             Token::INT(i) => Some(Expression::Literal(Literal::Int(i))),
             _ => None,
         }
+    }
+
+    fn parse_grouped_expr(&mut self) -> Option<Expression> {
+        self.next_token();
+
+        let exp = match self.parse_expression(Precedence::Lowest) {
+            Some(expression) => Some(expression),
+            _ => None,
+        };
+
+        if !self.expect_peek(Token::RPAREN) {
+            return None;
+        }
+
+        exp
     }
 
     fn parse_prefix_expression(&mut self) -> Option<Expression> {
@@ -195,6 +416,13 @@ impl Parser {
         self.next_token();
         match self.parse_expression(Precedence::Prefix) {
             Some(expression) => Some(Expression::Prefix(prefix, Box::new(expression))),
+            _ => None,
+        }
+    }
+
+    fn parse_string_expression(&mut self) -> Option<Expression> {
+        match self.cur_token {
+            Token::STRING(ref mut s) => Some(Expression::Literal(Literal::String(s.clone()))),
             _ => None,
         }
     }
@@ -241,6 +469,7 @@ mod tests {
         let x = 5;
         let y = 10;
         let foobar = 838383;
+        let a = b;
         "#;
 
         let l = lexer::lexer::new(String::from(input));
@@ -252,22 +481,27 @@ mod tests {
         assert_ne!(program.len(), 0, "No program loaded");
         check_errors(p);
 
-        assert_eq!(program.len(), 3, "expected 3 statements");
-        let expected: [Statement; 3] = [
+        assert_eq!(program.len(), 4, "expected 3 statements");
+        let expected: [Statement; 4] = [
             Statement::Let(
                 Ident(String::from("x")),
-                Expression::Blank,
-                // Expression::Literal(Literal::Int(5)),
+                // Expression::Blank,
+                Expression::Literal(Literal::Int(5)),
             ),
             Statement::Let(
                 Ident(String::from("y")),
-                Expression::Blank,
-                // Expression::Literal(Literal::Int(10)),
+                //Expression::Blank,
+                Expression::Literal(Literal::Int(10)),
             ),
             Statement::Let(
                 Ident(String::from("foobar")),
-                Expression::Blank,
-                // Expression::Literal(Literal::Int(838383)),
+                //Expression::Blank,
+                Expression::Literal(Literal::Int(838383)),
+            ),
+            Statement::Let(
+                Ident(String::from("a")),
+                //Expression::Blank,
+                Expression::Ident(Ident(String::from("b"))),
             ),
         ];
         for i in 0..program.len() {
@@ -291,7 +525,7 @@ mod tests {
         // println!("test test test");
         assert_ne!(program.len(), 0, "No program loaded");
         let errs = p.errors();
-        // print!("{:?}", errs);
+        print!("{:?}", errs);
         assert_eq!(errs.len(), 2, "We're expecting two errors");
     }
 
@@ -301,6 +535,7 @@ mod tests {
       return 5;
       return 10;
       return 838383;
+      return a;
       "#;
 
         let l = lexer::lexer::new(String::from(input));
@@ -312,21 +547,209 @@ mod tests {
         assert_ne!(program.len(), 0, "No program loaded");
         check_errors(p);
 
-        assert_eq!(program.len(), 3, "expected 3 statements");
-        let expected: [Statement; 3] = [
+        assert_eq!(program.len(), 4, "expected 3 statements");
+        let expected: [Statement; 4] = [
             Statement::Return(
-                Expression::Blank,
-                // Expression::Literal(Literal::Int(5)),
+                //Expression::Blank,
+                Expression::Literal(Literal::Int(5)),
             ),
             Statement::Return(
-                Expression::Blank,
-                // Expression::Literal(Literal::Int(10)),
+                //Expression::Blank,
+                Expression::Literal(Literal::Int(10)),
             ),
             Statement::Return(
-                Expression::Blank,
-                // Expression::Literal(Literal::Int(838383)),
+                //Expression::Blank,
+                Expression::Literal(Literal::Int(838383)),
+            ),
+            Statement::Return(
+                //Expression::Blank,
+                Expression::Ident(Ident(String::from("a"))),
             ),
         ];
+        for i in 0..program.len() {
+            assert_eq!(program[i], expected[i], "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_if_expression() {
+        let input = r#"
+            if (x < y) {x}
+        "#;
+
+        let l = lexer::lexer::new(String::from(input));
+        let mut p = Parser::new(l);
+
+        let program = p.parse_program();
+
+        assert_ne!(program.len(), 0, "No program loaded");
+        check_errors(p);
+
+        assert_eq!(program.len(), 1, "expected 1 statement");
+
+        let expected: [Statement; 1] = [Statement::Expression(Expression::If {
+            condition: Box::new(Expression::Infix(
+                Infix::Lt,
+                Box::new(Expression::Ident(Ident(String::from("x")))),
+                Box::new(Expression::Ident(Ident(String::from("y")))),
+            )),
+            consequence: vec![Statement::Expression(Expression::Ident(Ident(
+                String::from("x"),
+            )))],
+            alternative: None,
+        })];
+        for i in 0..program.len() {
+            assert_eq!(program[i], expected[i], "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_if_else_expression() {
+        let input = r#"
+            if (x < y) {x} else {y}
+        "#;
+
+        let l = lexer::lexer::new(String::from(input));
+        let mut p = Parser::new(l);
+
+        let program = p.parse_program();
+
+        assert_ne!(program.len(), 0, "No program loaded");
+        check_errors(p);
+
+        assert_eq!(program.len(), 1, "expected 1 statement");
+
+        let expected: [Statement; 1] = [Statement::Expression(Expression::If {
+            condition: Box::new(Expression::Infix(
+                Infix::Lt,
+                Box::new(Expression::Ident(Ident(String::from("x")))),
+                Box::new(Expression::Ident(Ident(String::from("y")))),
+            )),
+            consequence: vec![Statement::Expression(Expression::Ident(Ident(
+                String::from("x"),
+            )))],
+            alternative: Some(vec![Statement::Expression(Expression::Ident(Ident(
+                String::from("y"),
+            )))]),
+        })];
+        for i in 0..program.len() {
+            assert_eq!(program[i], expected[i], "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_func_expression() {
+        let input = r#"
+            fn(x,y) {x + y}
+            fn(x) {x}
+            fn() {x}
+        "#;
+
+        let l = lexer::lexer::new(String::from(input));
+        let mut p = Parser::new(l);
+
+        let program = p.parse_program();
+
+        assert_ne!(program.len(), 0, "No program loaded");
+        check_errors(p);
+
+        assert_eq!(program.len(), 3, "expected 3 statement");
+
+        let expected: [Statement; 3] = [
+            Statement::Expression(Expression::Func {
+                params: vec![Ident(String::from("x")), Ident(String::from("y"))],
+                body: vec![Statement::Expression(Expression::Infix(
+                    Infix::Plus,
+                    Box::new(Expression::Ident(Ident(String::from("x")))),
+                    Box::new(Expression::Ident(Ident(String::from("y")))),
+                ))],
+            }),
+            Statement::Expression(Expression::Func {
+                params: vec![Ident(String::from("x"))],
+                body: vec![Statement::Expression(Expression::Ident(Ident(
+                    String::from("x"),
+                )))],
+            }),
+            Statement::Expression(Expression::Func {
+                params: vec![],
+                body: vec![Statement::Expression(Expression::Ident(Ident(
+                    String::from("x"),
+                )))],
+            }),
+        ];
+        for i in 0..program.len() {
+            assert_eq!(program[i], expected[i], "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_call_expression() {
+        let input = r#"
+            add(1, 2*3, 4+5);
+        "#;
+
+        let l = lexer::lexer::new(String::from(input));
+        let mut p = Parser::new(l);
+
+        let program = p.parse_program();
+
+        assert_ne!(program.len(), 0, "No program loaded");
+        check_errors(p);
+
+        assert_eq!(program.len(), 1, "expected 1 statement");
+
+        let expected: [Statement; 1] = [Statement::Expression(Expression::Call {
+            func: Box::new(Expression::Ident(Ident(String::from("add")))),
+            args: vec![
+                Expression::Literal(Literal::Int(1)),
+                Expression::Infix(
+                    Infix::Multiply,
+                    Box::new(Expression::Literal(Literal::Int(2))),
+                    Box::new(Expression::Literal(Literal::Int(3))),
+                ),
+                Expression::Infix(
+                    Infix::Plus,
+                    Box::new(Expression::Literal(Literal::Int(4))),
+                    Box::new(Expression::Literal(Literal::Int(5))),
+                ),
+            ],
+        })];
+        for i in 0..program.len() {
+            assert_eq!(program[i], expected[i], "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_array_expression() {
+        let input = r#"
+            [1, 2 * 2, 3 + 3];
+        "#;
+
+        let l = lexer::lexer::new(String::from(input));
+        let mut p = Parser::new(l);
+
+        let program = p.parse_program();
+
+        assert_ne!(program.len(), 0, "No program loaded");
+        check_errors(p);
+
+        assert_eq!(program.len(), 1, "expected 1 statement");
+
+        let expected: [Statement; 1] = [Statement::Expression(Expression::Literal(
+            Literal::Array(vec![
+                Expression::Literal(Literal::Int(1)),
+                Expression::Infix(
+                    Infix::Multiply,
+                    Box::new(Expression::Literal(Literal::Int(2))),
+                    Box::new(Expression::Literal(Literal::Int(2))),
+                ),
+                Expression::Infix(
+                    Infix::Plus,
+                    Box::new(Expression::Literal(Literal::Int(3))),
+                    Box::new(Expression::Literal(Literal::Int(3))),
+                ),
+            ]),
+        ))];
         for i in 0..program.len() {
             assert_eq!(program[i], expected[i], "{}", i);
         }
@@ -397,6 +820,8 @@ mod tests {
         let input = r#"
       -foobar;
       !5;
+      !true;
+      !false;
       "#;
 
         let l = lexer::lexer::new(String::from(input));
@@ -408,8 +833,8 @@ mod tests {
         assert_ne!(program.len(), 0, "No program loaded");
         check_errors(p);
 
-        assert_eq!(program.len(), 2, "expected 2 statements");
-        let expected: [Statement; 2] = [
+        assert_eq!(program.len(), 4, "expected 2 statements");
+        let expected: [Statement; 4] = [
             Statement::Expression(Expression::Prefix(
                 Prefix::Minus,
                 Box::new(Expression::Ident(Ident(String::from("foobar")))),
@@ -417,6 +842,14 @@ mod tests {
             Statement::Expression(Expression::Prefix(
                 Prefix::Bang,
                 Box::new(Expression::Literal(Literal::Int(5))),
+            )),
+            Statement::Expression(Expression::Prefix(
+                Prefix::Bang,
+                Box::new(Expression::Literal(Literal::Bool(true))),
+            )),
+            Statement::Expression(Expression::Prefix(
+                Prefix::Bang,
+                Box::new(Expression::Literal(Literal::Bool(false))),
             )),
         ];
         for i in 0..program.len() {
@@ -437,6 +870,9 @@ mod tests {
       5 >= 5;
       5 == 5;
       5 != 5;
+      true == true;
+      true != false;
+      false == false;
       "#;
 
         let l = lexer::lexer::new(String::from(input));
@@ -448,8 +884,8 @@ mod tests {
         assert_ne!(program.len(), 0, "No program loaded");
         check_errors(p);
 
-        assert_eq!(program.len(), 10, "expected 10 statements");
-        let expected: [Statement; 10] = [
+        assert_eq!(program.len(), 13, "expected 13 statements");
+        let expected: [Statement; 13] = [
             Statement::Expression(Expression::Infix(
                 Infix::Multiply,
                 Box::new(Expression::Literal(Literal::Int(5))),
@@ -500,6 +936,21 @@ mod tests {
                 Box::new(Expression::Literal(Literal::Int(5))),
                 Box::new(Expression::Literal(Literal::Int(5))),
             )),
+            Statement::Expression(Expression::Infix(
+                Infix::Eq,
+                Box::new(Expression::Literal(Literal::Bool(true))),
+                Box::new(Expression::Literal(Literal::Bool(true))),
+            )),
+            Statement::Expression(Expression::Infix(
+                Infix::Ne,
+                Box::new(Expression::Literal(Literal::Bool(true))),
+                Box::new(Expression::Literal(Literal::Bool(false))),
+            )),
+            Statement::Expression(Expression::Infix(
+                Infix::Eq,
+                Box::new(Expression::Literal(Literal::Bool(false))),
+                Box::new(Expression::Literal(Literal::Bool(false))),
+            )),
         ];
         for i in 0..program.len() {
             assert_eq!(program[i], expected[i], "{}", i);
@@ -521,6 +972,15 @@ mod tests {
         5 > 4 == 3 < 4;
         5 < 4 != 3 > 4;
         3 + 4 * 5 == 3 * 1 + 4 * 5;
+        true;
+        false;
+        3 > 5 == false;
+        3 < 5 == true;
+        1 + (2 + 3) + 4;
+        (5 + 5) * 2;
+        2 / (5 + 5);
+        -(5 + 5);
+        !(true == true);
       "#;
 
         let l = lexer::lexer::new(String::from(input));
@@ -532,7 +992,7 @@ mod tests {
         assert_ne!(program.len(), 0, "No program loaded");
         check_errors(p);
 
-        let expected: [&str; 13] = [
+        let expected: [&str; 22] = [
             "((-a) * b)",
             "(!(-a))",
             "((a + b) + c)",
@@ -546,6 +1006,15 @@ mod tests {
             "((5 > 4) == (3 < 4))",
             "((5 < 4) != (3 > 4))",
             "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))",
+            "true",
+            "false",
+            "((3 > 5) == false)",
+            "((3 < 5) == true)",
+            "((1 + (2 + 3)) + 4)",
+            "((5 + 5) * 2)",
+            "(2 / (5 + 5))",
+            "(-(5 + 5))",
+            "(!(true == true))",
         ];
         assert_eq!(
             program.len(),

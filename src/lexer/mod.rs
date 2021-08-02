@@ -79,6 +79,8 @@ impl lexer {
                 ')' => Token::RPAREN,
                 '{' => Token::LBRACE,
                 '}' => Token::RBRACE,
+                '[' => Token::LBRACKET,
+                ']' => Token::RBRACKET,
                 '+' => Token::PLUS,
                 '-' => Token::MINUS,
                 '/' => Token::SLASH,
@@ -111,6 +113,9 @@ impl lexer {
                     }
                 }
                 ',' => Token::COMMA,
+                '"' => {
+                    return self.read_string();
+                }
                 x => {
                     maintainCh = true;
                     if is_letter(x) {
@@ -139,6 +144,25 @@ impl lexer {
         }
 
         t
+    }
+
+    fn read_string(&mut self) -> Token {
+        self.read_char();
+
+        let spos = self.position;
+        loop {
+            match self.ch {
+                Some('"') | None => {
+                    // TODO: hmm... not good to clone the entire input then grab the specific bit
+                    let literal = &self.input.clone()[spos..self.position];
+                    self.read_char();
+                    return Token::STRING(literal.to_string());
+                }
+                _ => {
+                    self.read_char();
+                }
+            }
+        }
     }
 
     fn read_identifier(&mut self) -> &str {
@@ -221,9 +245,13 @@ mod tests {
       if (a == b) {
         5;
       }
+      "test";
+      [1, 2];
+      abc[1];
+      def["asdf"];
       "#;
 
-        let expected: [Token; 47] = [
+        let expected = vec![
             Token::LET,
             Token::IDENT(String::from("five")),
             Token::ASSIGN,
@@ -270,6 +298,24 @@ mod tests {
             Token::INT(5),
             Token::SEMICOLON,
             Token::RBRACE,
+            Token::STRING(String::from("test")),
+            Token::SEMICOLON,
+            Token::LBRACKET,
+            Token::INT(1),
+            Token::COMMA,
+            Token::INT(2),
+            Token::RBRACKET,
+            Token::SEMICOLON,
+            Token::IDENT(String::from("abc")),
+            Token::LBRACKET,
+            Token::INT(1),
+            Token::RBRACKET,
+            Token::SEMICOLON,
+            Token::IDENT(String::from("def")),
+            Token::LBRACKET,
+            Token::STRING(String::from("asdf")),
+            Token::RBRACKET,
+            Token::SEMICOLON,
             Token::EOF,
         ];
 

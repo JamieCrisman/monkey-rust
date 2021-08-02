@@ -41,6 +41,20 @@ pub enum Expression {
     Literal(Literal),
     Prefix(Prefix, Box<Expression>),
     Infix(Infix, Box<Expression>, Box<Expression>),
+    Index(Box<Expression>, Box<Expression>),
+    If {
+        condition: Box<Expression>,
+        consequence: BlockStatement,
+        alternative: Option<BlockStatement>,
+    },
+    Func {
+        params: Vec<Ident>,
+        body: BlockStatement,
+    },
+    Call {
+        func: Box<Expression>,
+        args: Vec<Expression>,
+    },
 }
 
 impl fmt::Display for Expression {
@@ -55,6 +69,34 @@ impl fmt::Display for Expression {
             Self::Infix(i, e1, e2) => {
                 write!(f, "({} {} {})", e1, i, e2)
             } // _ => write!(f, "D:"),
+            Self::If {
+                condition,
+                consequence,
+                alternative,
+            } => {
+                write!(
+                    f,
+                    "TODO // Can't implement display for Vec, need to wrap it"
+                )
+                //                if (alternative.is_some()) {
+                //                    write!(
+                //                        f,
+                //                        "if ({}) {{\n\t{}\n}} else {{\n\t{}}}",
+                //                        condition, consequence, alternative
+                //                    )
+                //                } else {
+                //                    write!(f, "if ({}) {{\n\t{}\n}}", condition, consequence)
+                //                }
+            }
+            Self::Func { params, body } => {
+                write!(f, "Todo")
+            }
+            Self::Call { func, args } => {
+                write!(f, "todo")
+            }
+            Self::Index(exp, exp2) => {
+                write!(f, "todo")
+            }
         }
     }
 }
@@ -110,7 +152,7 @@ pub enum Literal {
     Int(i64),
     String(String),
     Bool(bool),
-    // Array(Vec<Expression>),
+    Array(Vec<Expression>),
     // Hash(Vec<(Expression, Expression)>),
 }
 
@@ -126,13 +168,14 @@ impl fmt::Display for Literal {
                     write!(f, "false")
                 }
             } // _ => write!(f, "D:"),
+            Self::Array(v) => write!(f, "{:?}", v),
         }
     }
 }
 
-pub type Block_Statement = Vec<Statement>;
+pub type BlockStatement = Vec<Statement>;
 
-pub type Program = Block_Statement;
+pub type Program = BlockStatement;
 
 pub fn precedence_of(t: Token) -> Precedence {
     match t {
@@ -141,7 +184,8 @@ pub fn precedence_of(t: Token) -> Precedence {
         Token::ASTERISK | Token::SLASH => Precedence::Product,
         Token::LT | Token::GT => Precedence::LessGreater,
         Token::LTE | Token::GTE => Precedence::LessGreater,
-        // Token::LPAREN
+        Token::LBRACKET => Precedence::Index,
+        Token::LPAREN => Precedence::Call,
         _ => Precedence::Lowest,
     }
 }
@@ -155,5 +199,5 @@ pub enum Precedence {
     Product,     // *
     Prefix,      // -X or !X
     Call,        // myFunction(x)
-                 // Index,       // array[index]
+    Index,       // Index,       // array[index]
 }
