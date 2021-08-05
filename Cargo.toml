@@ -1,5 +1,5 @@
 [package]
-name = "gouache"
+name = "monkey"
 version = "0.1.0"
 authors = ["Jamie Crisman <Jamie@longest.voyage>"]
 edition = "2018"
