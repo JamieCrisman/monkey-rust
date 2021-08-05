@@ -1,5 +1,5 @@
 use crate::token::Token;
-pub struct lexer {
+pub struct Lexer {
     input: String,
     position: usize,
     read_pos: usize,
@@ -14,7 +14,7 @@ fn is_digit(ch: char) -> bool {
     '0' <= ch && ch <= '9'
 }
 
-impl lexer {
+impl Lexer {
     pub fn new(input: String) -> Self {
         let mut s = Self {
             input,
@@ -60,7 +60,7 @@ impl lexer {
 
     pub fn next_token(&mut self) -> Token {
         self.skip_whitespace();
-        let mut maintainCh = false;
+        let mut maintain_ch = false;
         let t = if self.ch.is_none() {
             Token::EOF
         } else {
@@ -74,6 +74,7 @@ impl lexer {
                         Token::ASSIGN
                     }
                 }
+                ':' => Token::COLON,
                 ';' => Token::SEMICOLON,
                 '(' => Token::LPAREN,
                 ')' => Token::RPAREN,
@@ -117,7 +118,7 @@ impl lexer {
                     return self.read_string();
                 }
                 x => {
-                    maintainCh = true;
+                    maintain_ch = true;
                     if is_letter(x) {
                         let literal = self.read_identifier();
                         match literal {
@@ -139,7 +140,7 @@ impl lexer {
                 }
             }
         };
-        if !maintainCh {
+        if !maintain_ch {
             self.read_char();
         }
 
@@ -200,7 +201,7 @@ mod tests {
             Token::EOF,
         ];
 
-        let mut r = lexer::new(String::from(input));
+        let mut r = Lexer::new(String::from(input));
         for i in 0..expected.len() {
             let next = r.next_token();
             assert_eq!(expected[i], next, "{}", i);
@@ -225,7 +226,7 @@ mod tests {
             Token::EOF,
         ];
 
-        let mut r = lexer::new(String::from(input));
+        let mut r = Lexer::new(String::from(input));
         for i in 0..expected.len() {
             let next = r.next_token();
             assert_eq!(expected[i], next, "{}", i);
@@ -249,6 +250,7 @@ mod tests {
       [1, 2];
       abc[1];
       def["asdf"];
+      {"asdf":123};
       "#;
 
         let expected = vec![
@@ -316,10 +318,16 @@ mod tests {
             Token::STRING(String::from("asdf")),
             Token::RBRACKET,
             Token::SEMICOLON,
+            Token::LBRACE,
+            Token::STRING(String::from("asdf")),
+            Token::COLON,
+            Token::INT(123),
+            Token::RBRACE,
+            Token::SEMICOLON,
             Token::EOF,
         ];
 
-        let mut r = lexer::new(String::from(input));
+        let mut r = Lexer::new(String::from(input));
         for i in 0..expected.len() {
             let next = r.next_token();
             // println!("{:?}", next);

@@ -1,11 +1,14 @@
 pub mod ast;
+use crate::lexer::Lexer;
 use crate::token::Token;
-use crate::{lexer::lexer, token};
 
-use self::ast::*;
+use self::ast::{
+    precedence_of, BlockStatement, Expression, Ident, Infix, Literal, Precedence, Prefix, Program,
+    Statement,
+};
 
 pub struct Parser {
-    l: lexer,
+    l: Lexer,
     cur_token: Token,
     peek_token: Token,
     errors: Vec<String>,
@@ -16,7 +19,7 @@ fn variant_eq<T>(a: &T, b: &T) -> bool {
 }
 
 impl Parser {
-    pub fn new(lex: lexer) -> Self {
+    pub fn new(lex: Lexer) -> Self {
         let mut p = Self {
             l: lex,
             cur_token: Token::EOF,
@@ -128,7 +131,7 @@ impl Parser {
             Token::STRING(_) => self.parse_string_expression(),
             Token::BOOL(_) => self.parse_bool_expr(),
             Token::LBRACKET => self.parse_array_ident_expr(),
-            // Token::Lbrace => self.parse_hash_expr(),
+            Token::LBRACE => self.parse_hash_expr(),
             Token::BANG | Token::MINUS => self.parse_prefix_expression(),
             Token::LPAREN => self.parse_grouped_expr(),
             Token::IF => self.parse_if_expression(),
@@ -200,6 +203,42 @@ impl Parser {
             params,
             body: self.parse_block_statement(),
         })
+    }
+
+    fn parse_hash_expr(&mut self) -> Option<Expression> {
+        let mut pairs = Vec::new();
+
+        while self.peek_token != Token::RBRACE {
+            self.next_token();
+
+            let key = match self.parse_expression(Precedence::Lowest) {
+                Some(expr) => expr,
+                None => return None,
+            };
+
+            if !self.expect_peek(Token::COLON) {
+                return None;
+            }
+
+            self.next_token();
+
+            let value = match self.parse_expression(Precedence::Lowest) {
+                Some(expr) => expr,
+                None => return None,
+            };
+
+            pairs.push((key, value));
+
+            if self.peek_token != Token::RBRACE && !self.expect_peek(Token::COMMA) {
+                return None;
+            }
+        }
+
+        if !self.expect_peek(Token::RBRACE) {
+            return None;
+        }
+
+        Some(Expression::Literal(Literal::Hash(pairs)))
     }
 
     fn parse_array_ident_expr(&mut self) -> Option<Expression> {
@@ -472,7 +511,7 @@ mod tests {
         let a = b;
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 
@@ -517,7 +556,7 @@ mod tests {
         let  = 838383;
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 
@@ -538,7 +577,7 @@ mod tests {
       return a;
       "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 
@@ -577,7 +616,7 @@ mod tests {
             if (x < y) {x}
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
         let mut p = Parser::new(l);
 
         let program = p.parse_program();
@@ -609,7 +648,7 @@ mod tests {
             if (x < y) {x} else {y}
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
         let mut p = Parser::new(l);
 
         let program = p.parse_program();
@@ -645,7 +684,7 @@ mod tests {
             fn() {x}
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
         let mut p = Parser::new(l);
 
         let program = p.parse_program();
@@ -688,7 +727,7 @@ mod tests {
             add(1, 2*3, 4+5);
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
         let mut p = Parser::new(l);
 
         let program = p.parse_program();
@@ -725,7 +764,7 @@ mod tests {
             [1, 2 * 2, 3 + 3];
         "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
         let mut p = Parser::new(l);
 
         let program = p.parse_program();
@@ -750,6 +789,39 @@ mod tests {
                 ),
             ]),
         ))];
+        for i in 0..program.len() {
+            assert_eq!(program[i], expected[i], "{}", i);
+        }
+    }
+
+    #[test]
+    fn test_hash_expression() {
+        let input = r#"
+            {"abc": "efg", "asdf": 123};
+        "#;
+
+        let l = lexer::Lexer::new(String::from(input));
+        let mut p = Parser::new(l);
+
+        let program = p.parse_program();
+
+        assert_ne!(program.len(), 0, "No program loaded");
+        check_errors(p);
+
+        assert_eq!(program.len(), 1, "expected 1 statement");
+
+        let expected: [Statement; 1] = [Statement::Expression(Expression::Literal(Literal::Hash(
+            vec![
+                (
+                    Expression::Literal(Literal::String(String::from("abc"))),
+                    Expression::Literal(Literal::String(String::from("efg"))),
+                ),
+                (
+                    Expression::Literal(Literal::String(String::from("asdf"))),
+                    Expression::Literal(Literal::Int(123)),
+                ),
+            ],
+        )))];
         for i in 0..program.len() {
             assert_eq!(program[i], expected[i], "{}", i);
         }
@@ -796,7 +868,7 @@ mod tests {
       5;
       "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 
@@ -824,7 +896,7 @@ mod tests {
       !false;
       "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 
@@ -875,7 +947,7 @@ mod tests {
       false == false;
       "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 
@@ -983,7 +1055,7 @@ mod tests {
         !(true == true);
       "#;
 
-        let l = lexer::lexer::new(String::from(input));
+        let l = lexer::Lexer::new(String::from(input));
 
         let mut p = Parser::new(l);
 

@@ -14,7 +14,7 @@ pub enum Object {
     String(String),
     Bool(bool),
     Array(Vec<Object>),
-    //Hash(HashMap<Object, Object>),
+    Hash(HashMap<Object, Object>),
     Func(Vec<Ident>, BlockStatement, Rc<RefCell<Env>>),
     Builtin(i32, BuiltInFunc),
     Null,
@@ -39,17 +39,17 @@ impl fmt::Display for Object {
                 }
                 write!(f, "{}", result)
             }
-            // Object::Hash(ref hash) => {
-            //     let mut result = String::new();
-            //     for (i, (k, v)) in hash.iter().enumerate() {
-            //         if i < 1 {
-            //             result.push_str(&format!("{}: {}", k, v));
-            //         } else {
-            //             result.push_str(&format!(", {}: {}", k, v));
-            //         }
-            //     }
-            //     write!(f, "{{{}}}", result)
-            // }
+            Object::Hash(ref hash) => {
+                let mut result = String::new();
+                for (i, (k, v)) in hash.iter().enumerate() {
+                    if i < 1 {
+                        result.push_str(&format!("{}: {}", k, v));
+                    } else {
+                        result.push_str(&format!(", {}: {}", k, v));
+                    }
+                }
+                write!(f, "{{{}}}", result)
+            }
             Object::Func(ref params, _, _) => {
                 let mut result = String::new();
                 for (i, Ident(ref s)) in params.iter().enumerate() {
@@ -69,7 +69,7 @@ impl fmt::Display for Object {
     }
 }
 
-// Impl Eq for Object {}
+impl Eq for Object {}
 
 impl Hash for Object {
     fn hash<H: Hasher>(&self, state: &mut H) {

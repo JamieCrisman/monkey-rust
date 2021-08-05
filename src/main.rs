@@ -2,6 +2,8 @@
 mod lexer;
 mod parser;
 use std::io::{self, BufRead};
+mod code;
+mod compiler;
 mod evaluator;
 mod token;
 // use token::Token;
@@ -34,7 +36,7 @@ fn main() {
         let stdin = io::stdin();
         io::stdout().flush().unwrap();
         stdin.lock().read_line(&mut line).unwrap();
-        let l = lexer::lexer::new(line);
+        let l = lexer::Lexer::new(line);
         let mut p = parser::Parser::new(l);
         let program = p.parse_program();
         let errs = p.errors();

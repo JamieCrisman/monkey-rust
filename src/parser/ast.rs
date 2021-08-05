@@ -70,9 +70,9 @@ impl fmt::Display for Expression {
                 write!(f, "({} {} {})", e1, i, e2)
             } // _ => write!(f, "D:"),
             Self::If {
-                condition,
-                consequence,
-                alternative,
+                condition: _,
+                consequence: _,
+                alternative: _,
             } => {
                 write!(
                     f,
@@ -88,13 +88,13 @@ impl fmt::Display for Expression {
                 //                    write!(f, "if ({}) {{\n\t{}\n}}", condition, consequence)
                 //                }
             }
-            Self::Func { params, body } => {
+            Self::Func { params: _, body: _ } => {
                 write!(f, "Todo")
             }
-            Self::Call { func, args } => {
+            Self::Call { func: _, args: _ } => {
                 write!(f, "todo")
             }
-            Self::Index(exp, exp2) => {
+            Self::Index(_exp, _exp2) => {
                 write!(f, "todo")
             }
         }
@@ -153,7 +153,7 @@ pub enum Literal {
     String(String),
     Bool(bool),
     Array(Vec<Expression>),
-    // Hash(Vec<(Expression, Expression)>),
+    Hash(Vec<(Expression, Expression)>),
 }
 
 impl fmt::Display for Literal {
@@ -169,6 +169,7 @@ impl fmt::Display for Literal {
                 }
             } // _ => write!(f, "D:"),
             Self::Array(v) => write!(f, "{:?}", v),
+            Self::Hash(v) => write!(f, "{:?}", v),
         }
     }
 }
