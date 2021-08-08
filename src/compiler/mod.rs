@@ -1,5 +1,5 @@
 use crate::code::*;
-use crate::parser::ast::Statement;
+use crate::parser::ast::{Expression, Infix, Literal, Program, Statement};
 use crate::Object;
 
 pub struct Compiler {
@@ -15,13 +15,85 @@ pub enum CompileError {
 impl Compiler {
     pub fn new() -> Self {
         return Compiler {
-            instructions: vec![],
+            instructions: Instructions { data: vec![] },
             constants: vec![],
         };
     }
 
-    pub fn compile(&self, s: Vec<Statement>) -> Result<(), CompileError> {
+    pub fn compile(&mut self, program: Vec<Statement>) -> Result<(), CompileError> {
+        for s in program {
+            if let Err(e) = self.compile_statement(s) {
+                return Err(e);
+            }
+        }
         Ok(())
+    }
+
+    fn compile_statement(&mut self, statement: Statement) -> Result<(), CompileError> {
+        match statement {
+            Statement::Blank => Ok(()),
+            Statement::Expression(e) => self.compile_expression(e),
+            // Statement::Let(l, e) => self.compile_let(l, e),
+            // Statement::Return(e) => self.compile_return(r),
+            _ => Err(CompileError::Reason("Not Implemented".to_string())),
+        }
+    }
+
+    fn compile_expression(&mut self, exp: Expression) -> Result<(), CompileError> {
+        match exp {
+            Expression::Blank => Ok(()),
+            Expression::Infix(i, exp_a, exp_b) => self.compile_infix(i, exp_a, exp_b),
+            Expression::Literal(literal) => self.compile_literal(literal),
+            _ => Err(CompileError::Reason("Not Implemented".to_string())),
+        }
+    }
+
+    fn compile_infix(
+        &mut self,
+        infix: Infix,
+        exp_a: Box<Expression>,
+        exp_b: Box<Expression>,
+    ) -> Result<(), CompileError> {
+        if let Err(e) = self.compile_expression(*exp_a) {
+            return Err(e);
+        }
+        if let Err(e) = self.compile_expression(*exp_b) {
+            return Err(e);
+        }
+
+        match infix {
+            Infix::Plus => self.emit(Opcode::Add, None),
+            _ => return Err(CompileError::Reason("Not Implemented".to_string())),
+        };
+        Ok(())
+    }
+
+    fn compile_literal(&mut self, l: Literal) -> Result<(), CompileError> {
+        match l {
+            Literal::Int(int) => {
+                let ind = self.add_constant(Object::Int(int)) as i32;
+                self.emit(Opcode::Constant, Some(vec![ind]))
+            }
+            _ => return Err(CompileError::Reason("Not Implemented".to_string())),
+        };
+        Ok(())
+    }
+
+    fn add_constant(&mut self, obj: Object) -> usize {
+        self.constants.push(obj);
+        return self.constants.len() - 1;
+    }
+
+    fn emit(&mut self, op: Opcode, operands: Option<Vec<i32>>) -> usize {
+        let ins = make(op, operands);
+        return self.add_instruction(ins.expect("wanted valid instructions"));
+    }
+
+    fn add_instruction(&mut self, ins: Instructions) -> usize {
+        let pos = self.instructions.data.len();
+        let mut ins_copy = ins.clone();
+        self.instructions.data.append(&mut ins_copy.data);
+        return pos;
     }
 
     pub fn bytecode(&self) -> Bytecode {
@@ -32,9 +104,10 @@ impl Compiler {
     }
 }
 
+#[derive(Debug)]
 pub struct Bytecode {
-    instructions: Vec<u8>,
-    constants: Vec<Object>,
+    pub instructions: Instructions,
+    pub constants: Vec<Object>,
 }
 
 #[cfg(test)]
@@ -62,8 +135,9 @@ mod tests {
             input: "1 + 2".to_string(),
             expected_constants: vec![Object::Int(1), Object::Int(2)],
             expected_instructions: vec![
-                make(Opcode::Constant, vec![0]).unwrap(),
-                make(Opcode::Constant, vec![1]).unwrap(),
+                make(Opcode::Constant, Some(vec![0])).unwrap(),
+                make(Opcode::Constant, Some(vec![1])).unwrap(),
+                make(Opcode::Add, None).unwrap(),
             ],
         }];
 
@@ -73,12 +147,13 @@ mod tests {
     fn run_compiler_test(tests: Vec<CompilerTestCase>) {
         for test in tests {
             let program = parse(test.input);
-            let c = Compiler::new();
+            let mut c = Compiler::new();
+            // println!("{:?}", program);
             let compile_result = c.compile(program);
             assert!(compile_result.is_ok());
 
             let bytecode = c.bytecode();
-
+            // println!("{:?}", bytecode);
             let instruction_result =
                 test_instructions(test.expected_instructions, bytecode.instructions);
             assert!(instruction_result.is_ok());
@@ -88,15 +163,20 @@ mod tests {
         }
     }
 
-    fn test_instructions(expected: Vec<Vec<u8>>, got: Vec<u8>) -> Result<(), CompileError> {
+    fn test_instructions(
+        expected: Vec<Instructions>,
+        got: Instructions,
+    ) -> Result<(), CompileError> {
         let concatted = concat_instructions(expected);
 
-        if got.len() != concatted.len() {
-            assert_eq!(concatted.len(), got.len());
+        if got.data.len() != concatted.data.len() {
+            assert_eq!(concatted.data.len(), got.data.len());
         }
 
-        for (i, ins) in concatted.iter().enumerate() {
-            assert_eq!(got.get(i).unwrap(), ins);
+        // println!("{:?}", result_list);
+        // println!("{:?}", concatted);
+        for (i, ins) in concatted.data.iter().enumerate() {
+            assert_eq!(got.data.get(i).unwrap(), ins);
             // if got.get(i).unwrap() != ins {
             //     return Err(CompileError::Reason(format!(
             //         "wrong instruction at {}, got: {:?} wanted: {:?}",
@@ -111,11 +191,11 @@ mod tests {
     fn concat_instructions(expected: Vec<Instructions>) -> Instructions {
         let mut out: Vec<u8> = vec![];
         for e in expected {
-            for b in e {
+            for b in e.data {
                 out.push(b);
             }
         }
-        return out;
+        return Instructions { data: out };
     }
 
     fn test_constants(expected: Vec<Object>, got: Vec<Object>) -> Result<(), CompileError> {

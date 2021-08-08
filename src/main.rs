@@ -6,6 +6,7 @@ mod code;
 mod compiler;
 mod evaluator;
 mod token;
+mod vm;
 // use token::Token;
 use evaluator::builtins::new_builtins;
 use evaluator::env;
@@ -14,6 +15,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use io::Write;
+
+use crate::vm::VM;
 
 fn main() {
     let mut env = env::Env::from(new_builtins());
@@ -45,9 +48,23 @@ fn main() {
                 println!("{}", e);
             }
         }
-        if let Some(result) = the_evaluator.eval(program) {
-            println!("{}\n", result);
+        let mut comp = compiler::Compiler::new();
+        if let Err(e) = comp.compile(program) {
+            println!("Compilation error: {:?}", e);
         }
+        let mut machine = VM::new(comp.bytecode());
+        if let Err(e) = machine.run() {
+            println!("Error Executing Code: {:?}", e);
+        }
+
+        if let Some(result) = machine.stack_top() {
+            println!("{}", result);
+        } else {
+            println!(" :C ");
+        }
+        // if let Some(result) = the_evaluator.eval(program) {
+        //     println!("{}\n", result);
+        // }
         // let mut tok = l.next_token();
         // while tok != Token::EOF {
         //     // println!("{:?}", tok);
