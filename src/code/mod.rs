@@ -70,7 +70,7 @@ impl fmt::Display for Instructions {
         // println!("converting {}", (*self.data.get(0).unwrap()));
         let op: Opcode = (*self.data.get(0).unwrap()).into();
         let mut values: Vec<u16> = vec![];
-        if let Some(ww) = op.width() {
+        if let Some(ww) = op.widths() {
             for w in ww {
                 match w {
                     2 => {
@@ -99,6 +99,11 @@ pub enum Opcode {
     Subtract = 3,
     Multiply = 4,
     Divide = 5,
+    True = 6,
+    False = 7,
+    Equal = 8,
+    NotEqual = 9,
+    GreaterThan = 10,
 }
 
 impl From<u8> for Opcode {
@@ -110,6 +115,11 @@ impl From<u8> for Opcode {
             3 => return Opcode::Subtract,
             4 => return Opcode::Multiply,
             5 => return Opcode::Divide,
+            6 => return Opcode::True,
+            7 => return Opcode::False,
+            8 => return Opcode::Equal,
+            9 => return Opcode::NotEqual,
+            10 => return Opcode::GreaterThan,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -131,12 +141,35 @@ pub enum MakeError {
 }
 
 impl Opcode {
-    pub fn width(&self) -> Option<Vec<i16>> {
+    pub fn widths(&self) -> Option<Vec<i16>> {
         match self {
             Opcode::Constant => Some(vec![2]),
-            Opcode::Add | Opcode::Divide | Opcode::Subtract | Opcode::Multiply | Opcode::Pop => {
-                None
-            }
+            Opcode::Add
+            | Opcode::Divide
+            | Opcode::Subtract
+            | Opcode::Multiply
+            | Opcode::Pop
+            | Opcode::True
+            | Opcode::GreaterThan
+            | Opcode::Equal
+            | Opcode::NotEqual
+            | Opcode::False => None,
+        }
+    }
+
+    pub fn operand_width(&self) -> usize {
+        match self {
+            Opcode::Constant => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
+            Opcode::Add
+            | Opcode::Divide
+            | Opcode::Subtract
+            | Opcode::Multiply
+            | Opcode::Pop
+            | Opcode::True
+            | Opcode::GreaterThan
+            | Opcode::Equal
+            | Opcode::NotEqual
+            | Opcode::False => 0,
         }
     }
 }
@@ -158,15 +191,7 @@ impl Opcode {
 
 pub fn make(op: Opcode, operands: Option<Vec<i32>>) -> Result<Instructions, MakeError> {
     let mut instruction_len = 1;
-    let width = op.width();
-    match width {
-        Some(size_vec) => {
-            for l in size_vec {
-                instruction_len += l;
-            }
-        }
-        None => {}
-    };
+    instruction_len += op.operand_width();
     let mut result = vec![0; instruction_len as usize];
     result[0] = op.clone() as u8;
     if instruction_len > 1 {
@@ -178,7 +203,7 @@ pub fn make(op: Opcode, operands: Option<Vec<i32>>) -> Result<Instructions, Make
         }
 
         let mut offset = 1 as usize;
-        let ww = op.width().unwrap();
+        let ww = op.widths().expect("expected a widths for op");
         for (i, o) in operands.unwrap().iter().enumerate() {
             let w = ww.get(i);
             match w {
@@ -254,12 +279,15 @@ mod tests {
                 make(Opcode::Constant, Some(vec![65534])).unwrap(),
                 make(Opcode::Constant, Some(vec![1])).unwrap(),
                 make(Opcode::Constant, Some(vec![2])).unwrap(),
+                make(Opcode::True, None).unwrap(),
+                make(Opcode::False, None).unwrap(),
+                make(Opcode::Pop, None).unwrap(),
             ],
         };
 
         let result = format!("{}", instr);
         assert_eq!(
-            "0000 Add\n0001 Constant 65534\n0004 Constant 1\n0007 Constant 2\n",
+            "0000 Add\n0001 Constant 65534\n0004 Constant 1\n0007 Constant 2\n0010 True\n0011 False\n0012 Pop\n",
             result
         );
     }

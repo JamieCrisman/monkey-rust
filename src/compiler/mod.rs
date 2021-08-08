@@ -58,6 +58,17 @@ impl Compiler {
         exp_a: Box<Expression>,
         exp_b: Box<Expression>,
     ) -> Result<(), CompileError> {
+        if infix == Infix::Lt {
+            if let Err(e) = self.compile_expression(*exp_b) {
+                return Err(e);
+            }
+            if let Err(e) = self.compile_expression(*exp_a) {
+                return Err(e);
+            }
+            self.emit(Opcode::GreaterThan, None);
+            return Ok(());
+        }
+
         if let Err(e) = self.compile_expression(*exp_a) {
             return Err(e);
         }
@@ -70,6 +81,9 @@ impl Compiler {
             Infix::Divide => self.emit(Opcode::Divide, None),
             Infix::Multiply => self.emit(Opcode::Multiply, None),
             Infix::Minus => self.emit(Opcode::Subtract, None),
+            Infix::Eq => self.emit(Opcode::Equal, None),
+            Infix::Ne => self.emit(Opcode::NotEqual, None),
+            Infix::Gt => self.emit(Opcode::GreaterThan, None),
             _ => return Err(CompileError::Reason("Not Implemented".to_string())),
         };
         Ok(())
@@ -80,6 +94,13 @@ impl Compiler {
             Literal::Int(int) => {
                 let ind = self.add_constant(Object::Int(int)) as i32;
                 self.emit(Opcode::Constant, Some(vec![ind]))
+            }
+            Literal::Bool(b) => {
+                if b {
+                    self.emit(Opcode::True, None)
+                } else {
+                    self.emit(Opcode::False, None)
+                }
             }
             _ => return Err(CompileError::Reason("Not Implemented".to_string())),
         };
@@ -186,6 +207,90 @@ mod tests {
                     make(Opcode::Constant, Some(vec![0])).unwrap(),
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
                     make(Opcode::Divide, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
+    }
+
+    #[test]
+    fn test_bool_arithmetic() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "true".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::True, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "false".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::False, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1 > 2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::GreaterThan, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1 < 2".to_string(),
+                expected_constants: vec![Object::Int(2), Object::Int(1)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::GreaterThan, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1 == 2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Equal, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1 != 2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::NotEqual, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "true == false".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::True, None).unwrap(),
+                    make(Opcode::False, None).unwrap(),
+                    make(Opcode::Equal, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "true != false".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::True, None).unwrap(),
+                    make(Opcode::False, None).unwrap(),
+                    make(Opcode::NotEqual, None).unwrap(),
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },

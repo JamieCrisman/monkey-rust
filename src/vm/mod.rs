@@ -11,6 +11,9 @@ pub enum VMError {
 
 const DEFAULT_STACK_SIZE: usize = 2048;
 
+const TRUE: Object = Object::Bool(true);
+const FALSE: Object = Object::Bool(false);
+
 pub struct VM {
     constants: Vec<Object>,
     instructions: Instructions,
@@ -56,11 +59,16 @@ impl VM {
                         *self.instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let const_index = u16::from_be_bytes(buff);
-                    ip += *op.width().unwrap().get(0).unwrap() as usize;
+                    ip += op.operand_width() as usize;
                     self.push(self.constants.get(const_index as usize).unwrap().clone())?;
                 }
                 Opcode::Add | Opcode::Divide | Opcode::Multiply | Opcode::Subtract => {
                     self.execute_binary_operation(op)?;
+                }
+                Opcode::True => self.push(TRUE)?,
+                Opcode::False => self.push(FALSE)?,
+                Opcode::Equal | Opcode::NotEqual | Opcode::GreaterThan => {
+                    self.execute_comparison(op)?;
                 }
                 Opcode::Pop => {
                     self.pop();
@@ -71,6 +79,89 @@ impl VM {
         }
 
         Ok(())
+    }
+
+    fn execute_comparison(&mut self, op: Opcode) -> Result<(), VMError> {
+        let right = self.pop();
+        let left = self.pop();
+
+        match (left.object_type(), right.object_type()) {
+            (ObjectType::Int, ObjectType::Int) => {
+                return self.execute_integer_comparison(op, left, right);
+            }
+            (ObjectType::Bool, ObjectType::Bool) => {}
+            (a, b) => {
+                return Err(VMError::Reason(format!(
+                    "Unsupported binary action for {:?} and {:?}",
+                    a, b
+                )))
+            }
+        };
+
+        let right_bool = match right {
+            Object::Bool(b) => b,
+            _ => return Err(VMError::Reason("Unexpected comparison type".to_string())),
+        };
+        let left_bool = match left {
+            Object::Bool(b) => b,
+            _ => return Err(VMError::Reason("Unexpected comparison type".to_string())),
+        };
+
+        match op {
+            Opcode::Equal => match left_bool == right_bool {
+                true => return self.push(TRUE),
+                false => return self.push(FALSE),
+            },
+            Opcode::NotEqual => match left_bool != right_bool {
+                true => return self.push(TRUE),
+                false => return self.push(FALSE),
+            },
+            _ => {
+                return Err(VMError::Reason(format!(
+                    "Unsupported operator action ({:?}) for {:?} and {:?}",
+                    op, left, right
+                )))
+            }
+        }
+
+        // Ok(())
+    }
+
+    fn execute_integer_comparison(
+        &mut self,
+        op: Opcode,
+        left: Object,
+        right: Object,
+    ) -> Result<(), VMError> {
+        let left_val = match left {
+            Object::Int(i) => i,
+            _ => return Err(VMError::Reason("Unexpected comparison type".to_string())),
+        };
+        let right_val = match right {
+            Object::Int(i) => i,
+            _ => return Err(VMError::Reason("Unexpected comparison type".to_string())),
+        };
+
+        match op {
+            Opcode::Equal => match left_val == right_val {
+                true => return self.push(TRUE),
+                false => return self.push(FALSE),
+            },
+            Opcode::NotEqual => match left_val != right_val {
+                true => return self.push(TRUE),
+                false => return self.push(FALSE),
+            },
+            Opcode::GreaterThan => match left_val > right_val {
+                true => return self.push(TRUE),
+                false => return self.push(FALSE),
+            },
+            _ => {
+                return Err(VMError::Reason(format!(
+                    "Unsupported operator action ({:?}) for {:?} and {:?}",
+                    op, left, right
+                )))
+            }
+        }
     }
 
     fn execute_binary_operation(&mut self, op: Opcode) -> Result<(), VMError> {
@@ -219,6 +310,90 @@ mod tests {
             VMTestCase {
                 expected_top: Some(Object::Int(60)),
                 input: "5 * (2 + 10)".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_bool_expression() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "1 < 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "1 > 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "1 < 1".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "1 > 1".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "1 == 1".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "1 != 1".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "1 == 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "1 != 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "true == true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "false == false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "true == false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "true != false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "false != true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "(1 < 2) == true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "(1 < 2) == false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "(1 > 2) == true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "(1 > 2) == false".to_string(),
             },
         ];
 
