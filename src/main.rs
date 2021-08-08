@@ -11,8 +11,8 @@ mod vm;
 use evaluator::builtins::new_builtins;
 use evaluator::env;
 use evaluator::object::Object;
-use std::cell::RefCell;
-use std::rc::Rc;
+// use std::cell::RefCell;
+// use std::rc::Rc;
 
 use io::Write;
 
@@ -31,7 +31,7 @@ fn main() {
         }),
     );
 
-    let mut the_evaluator = evaluator::Evaluator::new(Rc::new(RefCell::new(env)));
+    // let mut the_evaluator = evaluator::Evaluator::new(Rc::new(RefCell::new(env)));
 
     loop {
         print!(">> ");
@@ -57,7 +57,7 @@ fn main() {
             println!("Error Executing Code: {:?}", e);
         }
 
-        if let Some(result) = machine.stack_top() {
+        if let Some(result) = machine.last_popped() {
             println!("{}", result);
         } else {
             println!(" :C ");

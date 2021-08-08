@@ -94,14 +94,22 @@ impl fmt::Display for Instructions {
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum Opcode {
     Constant = 0,
-    Add = 1,
+    Pop = 1,
+    Add = 2,
+    Subtract = 3,
+    Multiply = 4,
+    Divide = 5,
 }
 
 impl From<u8> for Opcode {
     fn from(orig: u8) -> Self {
         match orig {
             0 => return Opcode::Constant,
-            1 => return Opcode::Add,
+            1 => return Opcode::Pop,
+            2 => return Opcode::Add,
+            3 => return Opcode::Subtract,
+            4 => return Opcode::Multiply,
+            5 => return Opcode::Divide,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -126,7 +134,9 @@ impl Opcode {
     pub fn width(&self) -> Option<Vec<i16>> {
         match self {
             Opcode::Constant => Some(vec![2]),
-            Opcode::Add => None,
+            Opcode::Add | Opcode::Divide | Opcode::Subtract | Opcode::Multiply | Opcode::Pop => {
+                None
+            }
         }
     }
 }

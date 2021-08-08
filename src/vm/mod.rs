@@ -1,7 +1,7 @@
 use crate::{
-    code::{InstructionList, Instructions, Opcode},
+    code::{Instructions, Opcode},
     compiler::Bytecode,
-    evaluator::object::Object,
+    evaluator::object::{Object, ObjectType},
 };
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -59,17 +59,11 @@ impl VM {
                     ip += *op.width().unwrap().get(0).unwrap() as usize;
                     self.push(self.constants.get(const_index as usize).unwrap().clone())?;
                 }
-                Opcode::Add => {
-                    let left = match self.pop() {
-                        Object::Int(int) => int,
-                        _ => return Err(VMError::Reason("unexpected type to add".to_string())),
-                    };
-                    let right = match self.pop() {
-                        Object::Int(int) => int,
-                        _ => return Err(VMError::Reason("unexpected type to add".to_string())),
-                    };
-
-                    self.push(Object::Int(left + right))?;
+                Opcode::Add | Opcode::Divide | Opcode::Multiply | Opcode::Subtract => {
+                    self.execute_binary_operation(op)?;
+                }
+                Opcode::Pop => {
+                    self.pop();
                 }
             }
 
@@ -79,12 +73,67 @@ impl VM {
         Ok(())
     }
 
-    pub fn push(&mut self, obj: Object) -> Result<(), VMError> {
+    fn execute_binary_operation(&mut self, op: Opcode) -> Result<(), VMError> {
+        let right = self.pop();
+        let left = self.pop();
+
+        match (left.object_type(), right.object_type()) {
+            (ObjectType::Int, ObjectType::Int) => {
+                self.execute_binary_integer_operation(op, left, right)?;
+            }
+            (a, b) => {
+                return Err(VMError::Reason(format!(
+                    "Unsupported binary action for {:?} and {:?}",
+                    a, b
+                )))
+            }
+        };
+
+        // self.push(Object::Int(left + right))?;
+
+        Ok(())
+    }
+
+    fn execute_binary_integer_operation(
+        &mut self,
+        op: Opcode,
+        left: Object,
+        right: Object,
+    ) -> Result<(), VMError> {
+        let left_val = match left {
+            Object::Int(int) => int,
+            _ => return Err(VMError::Reason("Unexpected type".to_string())),
+        };
+        let right_val = match right {
+            Object::Int(int) => int,
+            _ => return Err(VMError::Reason("Unexpected type".to_string())),
+        };
+
+        match op {
+            Opcode::Add => {
+                self.push(Object::Int(left_val + right_val))?;
+            }
+            Opcode::Divide => {
+                self.push(Object::Int(left_val / right_val))?;
+            }
+            Opcode::Multiply => {
+                self.push(Object::Int(left_val * right_val))?;
+            }
+            Opcode::Subtract => {
+                self.push(Object::Int(left_val - right_val))?;
+            }
+            _ => return Err(VMError::Reason("Unexpected operation".to_string())),
+        }
+
+        Ok(())
+    }
+
+    fn push(&mut self, obj: Object) -> Result<(), VMError> {
         if self.sp >= self.stack.capacity() {
             return Err(VMError::Reason("Stack overflow".to_string()));
         }
 
-        self.stack.push(obj);
+        self.stack.insert(self.sp, obj);
         self.sp += 1;
         Ok(())
     }
@@ -92,15 +141,23 @@ impl VM {
     pub fn pop(&mut self) -> Object {
         self.sp -= 1;
         self.stack
-            .pop()
+            .get(self.sp)
             .expect("Expected something to be on the stack")
+            .clone()
+    }
+
+    pub fn last_popped(&self) -> Option<Object> {
+        match self.stack.get(self.sp) {
+            Some(obj) => Some(obj.clone()),
+            None => None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     // use crate::evaluator::builtins::new_builtins;
-    use crate::code::*;
+    // use crate::code::*;
     use crate::compiler::*;
     use crate::evaluator::object::*;
     use crate::lexer;
@@ -127,6 +184,42 @@ mod tests {
                 expected_top: Some(Object::Int(3)),
                 input: "1 + 2".to_string(),
             },
+            VMTestCase {
+                expected_top: Some(Object::Int(-1)),
+                input: "1 - 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(2)),
+                input: "1 * 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(2)),
+                input: "4 / 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(55)),
+                input: "50 / 2 * 2 + 10 - 5".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: "5 + 5 + 5 + 5 - 10".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(32)),
+                input: "2 * 2 * 2 * 2 * 2".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(20)),
+                input: "5 * 2 + 10".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(25)),
+                input: "5 + 2 * 10".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(60)),
+                input: "5 * (2 + 10)".to_string(),
+            },
         ];
 
         run_vm_test(tests);
@@ -148,7 +241,7 @@ mod tests {
             let mut vmm = VM::new(c.bytecode());
             let result = vmm.run();
             assert!(!result.is_err());
-            let stack_elem = vmm.stack_top();
+            let stack_elem = vmm.last_popped();
 
             assert_eq!(stack_elem, test.expected_top);
         }

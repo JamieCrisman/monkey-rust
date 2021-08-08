@@ -1,5 +1,5 @@
 use crate::code::*;
-use crate::parser::ast::{Expression, Infix, Literal, Program, Statement};
+use crate::parser::ast::{Expression, Infix, Literal, Statement};
 use crate::Object;
 
 pub struct Compiler {
@@ -32,7 +32,11 @@ impl Compiler {
     fn compile_statement(&mut self, statement: Statement) -> Result<(), CompileError> {
         match statement {
             Statement::Blank => Ok(()),
-            Statement::Expression(e) => self.compile_expression(e),
+            Statement::Expression(e) => {
+                self.compile_expression(e)?;
+                self.emit(Opcode::Pop, None);
+                Ok(())
+            }
             // Statement::Let(l, e) => self.compile_let(l, e),
             // Statement::Return(e) => self.compile_return(r),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
@@ -63,6 +67,9 @@ impl Compiler {
 
         match infix {
             Infix::Plus => self.emit(Opcode::Add, None),
+            Infix::Divide => self.emit(Opcode::Divide, None),
+            Infix::Multiply => self.emit(Opcode::Multiply, None),
+            Infix::Minus => self.emit(Opcode::Subtract, None),
             _ => return Err(CompileError::Reason("Not Implemented".to_string())),
         };
         Ok(())
@@ -131,15 +138,58 @@ mod tests {
 
     #[test]
     fn test_integer_arithmetic() {
-        let tests: Vec<CompilerTestCase> = vec![CompilerTestCase {
-            input: "1 + 2".to_string(),
-            expected_constants: vec![Object::Int(1), Object::Int(2)],
-            expected_instructions: vec![
-                make(Opcode::Constant, Some(vec![0])).unwrap(),
-                make(Opcode::Constant, Some(vec![1])).unwrap(),
-                make(Opcode::Add, None).unwrap(),
-            ],
-        }];
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "1 + 2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Add, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1;2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1 - 2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Subtract, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "1 * 2".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Multiply, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "2 / 1".to_string(),
+                expected_constants: vec![Object::Int(2), Object::Int(1)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Divide, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
 
         run_compiler_test(tests);
     }

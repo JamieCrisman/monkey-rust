@@ -22,6 +22,37 @@ pub enum Object {
     Error(String),
 }
 
+impl Object {
+    pub fn object_type(&self) -> ObjectType {
+        match self {
+            Object::Int(_) => ObjectType::Int,
+            Object::String(_) => ObjectType::String,
+            Object::Bool(_) => ObjectType::Bool,
+            Object::Array(_) => ObjectType::Array,
+            Object::Hash(_) => ObjectType::Hash,
+            Object::Func(_, _, _) => ObjectType::Func,
+            Object::Builtin(_, _) => ObjectType::Builtin,
+            Object::Null => ObjectType::Null,
+            Object::ReturnValue(_) => ObjectType::ReturnValue,
+            Object::Error(_) => ObjectType::Error,
+        }
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum ObjectType {
+    Int,
+    String,
+    Bool,
+    Array,
+    Hash,
+    Func,
+    Builtin,
+    Null,
+    ReturnValue,
+    Error,
+}
+
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
