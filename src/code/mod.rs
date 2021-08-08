@@ -104,6 +104,8 @@ pub enum Opcode {
     Equal = 8,
     NotEqual = 9,
     GreaterThan = 10,
+    Minus = 11,
+    Bang = 12,
 }
 
 impl From<u8> for Opcode {
@@ -120,6 +122,8 @@ impl From<u8> for Opcode {
             8 => return Opcode::Equal,
             9 => return Opcode::NotEqual,
             10 => return Opcode::GreaterThan,
+            11 => return Opcode::Minus,
+            12 => return Opcode::Bang,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -153,6 +157,8 @@ impl Opcode {
             | Opcode::GreaterThan
             | Opcode::Equal
             | Opcode::NotEqual
+            | Opcode::Minus
+            | Opcode::Bang
             | Opcode::False => None,
         }
     }
@@ -169,6 +175,8 @@ impl Opcode {
             | Opcode::GreaterThan
             | Opcode::Equal
             | Opcode::NotEqual
+            | Opcode::Minus
+            | Opcode::Bang
             | Opcode::False => 0,
         }
     }

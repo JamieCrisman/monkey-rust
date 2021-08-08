@@ -1,5 +1,5 @@
 use crate::code::*;
-use crate::parser::ast::{Expression, Infix, Literal, Statement};
+use crate::parser::ast::{Expression, Infix, Literal, Prefix, Statement};
 use crate::Object;
 
 pub struct Compiler {
@@ -47,9 +47,19 @@ impl Compiler {
         match exp {
             Expression::Blank => Ok(()),
             Expression::Infix(i, exp_a, exp_b) => self.compile_infix(i, exp_a, exp_b),
+            Expression::Prefix(p, exp) => self.compile_prefix(p, exp),
             Expression::Literal(literal) => self.compile_literal(literal),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
         }
+    }
+
+    fn compile_prefix(&mut self, prefix: Prefix, exp: Box<Expression>) -> Result<(), CompileError> {
+        self.compile_expression(*exp)?;
+        match prefix {
+            Prefix::Bang => self.emit(Opcode::Bang, None),
+            Prefix::Minus => self.emit(Opcode::Minus, None),
+        };
+        Ok(())
     }
 
     fn compile_infix(
@@ -59,12 +69,8 @@ impl Compiler {
         exp_b: Box<Expression>,
     ) -> Result<(), CompileError> {
         if infix == Infix::Lt {
-            if let Err(e) = self.compile_expression(*exp_b) {
-                return Err(e);
-            }
-            if let Err(e) = self.compile_expression(*exp_a) {
-                return Err(e);
-            }
+            self.compile_expression(*exp_b)?;
+            self.compile_expression(*exp_a)?;
             self.emit(Opcode::GreaterThan, None);
             return Ok(());
         }
@@ -210,6 +216,15 @@ mod tests {
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },
+            CompilerTestCase {
+                input: "-1".to_string(),
+                expected_constants: vec![Object::Int(1)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Minus, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
         ];
 
         run_compiler_test(tests);
@@ -223,6 +238,15 @@ mod tests {
                 expected_constants: vec![],
                 expected_instructions: vec![
                     make(Opcode::True, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "!true".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::True, None).unwrap(),
+                    make(Opcode::Bang, None).unwrap(),
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },

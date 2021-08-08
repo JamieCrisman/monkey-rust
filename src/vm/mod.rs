@@ -70,6 +70,12 @@ impl VM {
                 Opcode::Equal | Opcode::NotEqual | Opcode::GreaterThan => {
                     self.execute_comparison(op)?;
                 }
+                Opcode::Bang => {
+                    self.execute_bang_operator()?;
+                }
+                Opcode::Minus => {
+                    self.execute_minus_operator()?;
+                }
                 Opcode::Pop => {
                     self.pop();
                 }
@@ -79,6 +85,29 @@ impl VM {
         }
 
         Ok(())
+    }
+
+    fn execute_bang_operator(&mut self) -> Result<(), VMError> {
+        let op = self.pop();
+
+        match op {
+            Object::Bool(true) => self.push(FALSE),
+            Object::Bool(false) => self.push(TRUE),
+            _ => self.push(FALSE),
+        }
+    }
+
+    fn execute_minus_operator(&mut self) -> Result<(), VMError> {
+        let op = self.pop();
+
+        match op {
+            Object::Int(int) => self.push(Object::Int(-int)),
+            _ => Err(VMError::Reason(format!(
+                "unsupported minus type: {:?} for {:?}",
+                op.object_type(),
+                op,
+            ))),
+        }
     }
 
     fn execute_comparison(&mut self, op: Opcode) -> Result<(), VMError> {
@@ -311,6 +340,22 @@ mod tests {
                 expected_top: Some(Object::Int(60)),
                 input: "5 * (2 + 10)".to_string(),
             },
+            VMTestCase {
+                expected_top: Some(Object::Int(-5)),
+                input: "-5".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(-10)),
+                input: "-10".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(0)),
+                input: "-50 + 100 + -50".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(50)),
+                input: "(5 + 10 * 2 + 15 / 3) * 2 + -10".to_string(),
+            },
         ];
 
         run_vm_test(tests);
@@ -394,6 +439,30 @@ mod tests {
             VMTestCase {
                 expected_top: Some(Object::Bool(true)),
                 input: "(1 > 2) == false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "!true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "!false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "!5".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "!!true".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(false)),
+                input: "!!false".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "!!5".to_string(),
             },
         ];
 
