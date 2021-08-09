@@ -16,7 +16,8 @@ use evaluator::object::Object;
 
 use io::Write;
 
-use crate::vm::VM;
+use compiler::symbol_table::{self, SymbolTable};
+use vm::VM;
 
 fn main() {
     let mut env = env::Env::from(new_builtins());
@@ -33,6 +34,10 @@ fn main() {
 
     // let mut the_evaluator = evaluator::Evaluator::new(Rc::new(RefCell::new(env)));
 
+    let mut constants: Vec<Object> = vec![];
+    let mut globals: Vec<Object> = Vec::with_capacity(vm::GLOBALS_SIZE);
+    let mut st: symbol_table::SymbolTable = SymbolTable::new();
+
     loop {
         print!(">> ");
         let mut line = String::new();
@@ -48,15 +53,22 @@ fn main() {
                 println!("{}", e);
             }
         }
-        let mut comp = compiler::Compiler::new();
+        // println!("{:?}", st);
+        let mut comp = compiler::Compiler::new_with_state(st.clone(), constants.clone());
         if let Err(e) = comp.compile(program) {
             println!("Compilation error: {:?}", e);
         }
-        let mut machine = VM::new(comp.bytecode());
+
+        let code = comp.bytecode();
+        constants = code.constants.clone();
+        st = comp.symbol_table.clone();
+        // println!("{:?}", comp.symbol_table);
+
+        let mut machine = VM::new_with_global_store(code, globals.clone());
         if let Err(e) = machine.run() {
             println!("Error Executing Code: {:?}", e);
         }
-
+        globals = machine.globals.clone();
         if let Some(result) = machine.last_popped() {
             println!("{}", result);
         } else {

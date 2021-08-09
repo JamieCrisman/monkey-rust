@@ -1,6 +1,9 @@
+pub mod symbol_table;
 use crate::code::*;
-use crate::parser::ast::{BlockStatement, Expression, Infix, Literal, Prefix, Statement};
+use crate::parser::ast::{BlockStatement, Expression, Ident, Infix, Literal, Prefix, Statement};
 use crate::Object;
+
+use self::symbol_table::SymbolTable;
 
 #[derive(Clone)]
 struct EmittedInstruction {
@@ -13,6 +16,7 @@ pub struct Compiler {
     constants: Vec<Object>,
     last_instruction: Option<EmittedInstruction>,
     previous_instruction: Option<EmittedInstruction>,
+    pub symbol_table: SymbolTable,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -27,7 +31,15 @@ impl Compiler {
             constants: vec![],
             last_instruction: None,
             previous_instruction: None,
+            symbol_table: SymbolTable::new(),
         };
+    }
+
+    pub fn new_with_state(st: SymbolTable, constants: Vec<Object>) -> Self {
+        let mut result = Self::new();
+        result.symbol_table = st;
+        result.constants = constants;
+        result
     }
 
     pub fn compile(&mut self, program: Vec<Statement>) -> Result<(), CompileError> {
@@ -47,7 +59,7 @@ impl Compiler {
                 self.emit(Opcode::Pop, None);
                 Ok(())
             }
-            // Statement::Let(l, e) => self.compile_let(l, e),
+            Statement::Let(l, e) => self.compile_let(l, e),
             // Statement::Return(e) => self.compile_return(r),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
         }
@@ -56,6 +68,18 @@ impl Compiler {
     fn compile_expression(&mut self, exp: Expression) -> Result<(), CompileError> {
         match exp {
             Expression::Blank => Ok(()),
+            Expression::Ident(ident) => {
+                let symbol = self.symbol_table.resolve(ident.0.as_str());
+                if symbol.is_none() {
+                    return Err(CompileError::Reason(format!(
+                        "undefined variable: {}",
+                        ident.0
+                    )));
+                }
+                let val = Some(vec![symbol.unwrap().index as i32]);
+                self.emit(Opcode::GetGlobal, val);
+                Ok(())
+            }
             Expression::Infix(i, exp_a, exp_b) => self.compile_infix(i, exp_a, exp_b),
             Expression::Prefix(p, exp) => self.compile_prefix(p, exp),
             Expression::Literal(literal) => self.compile_literal(literal),
@@ -66,6 +90,13 @@ impl Compiler {
             } => self.compile_if(condition, consequence, alternative),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
         }
+    }
+
+    fn compile_let(&mut self, l: Ident, e: Expression) -> Result<(), CompileError> {
+        self.compile_expression(e)?;
+        let symbol = self.symbol_table.define(l.0.as_str());
+        self.emit(Opcode::SetGlobal, Some(vec![symbol.index as i32]));
+        Ok(())
     }
 
     fn compile_if(
@@ -247,6 +278,46 @@ mod tests {
         let l = lexer::Lexer::new(input);
         let mut p = parser::Parser::new(l);
         p.parse_program()
+    }
+
+    #[test]
+    fn test_global_let() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "let one = 1; let two = 2;".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![1])).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let one = 1; one;".to_string(),
+                expected_constants: vec![Object::Int(1)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let one = 1; let two = one; two;".to_string(),
+                expected_constants: vec![Object::Int(1)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![1])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
     }
 
     #[test]

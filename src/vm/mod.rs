@@ -10,6 +10,7 @@ pub enum VMError {
 }
 
 const DEFAULT_STACK_SIZE: usize = 2048;
+pub const GLOBALS_SIZE: usize = 65536;
 
 const TRUE: Object = Object::Bool(true);
 const FALSE: Object = Object::Bool(false);
@@ -28,6 +29,7 @@ pub struct VM {
     instructions: Instructions,
     stack: Vec<Object>,
     sp: usize,
+    pub globals: Vec<Object>,
     // stack_size: i32,
 }
 
@@ -38,7 +40,14 @@ impl VM {
             constants: bytecode.constants.clone(),
             sp: 0,
             stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
+            globals: Vec::with_capacity(GLOBALS_SIZE),
         };
+    }
+
+    pub fn new_with_global_store(bytecode: Bytecode, g: Vec<Object>) -> Self {
+        let mut result = Self::new(bytecode);
+        result.globals = g;
+        result
     }
 
     pub fn stack_top(&self) -> Option<Object> {
@@ -109,6 +118,26 @@ impl VM {
                     self.pop();
                 }
                 Opcode::Null => self.push(NULL)?,
+                Opcode::GetGlobal => {
+                    let buff = [
+                        *self.instructions.data.get(ip + 1).expect("expected byte"),
+                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let global_index = u16::from_be_bytes(buff);
+                    ip += 2;
+                    let val = (*self.globals.get(global_index as usize).unwrap()).clone();
+                    self.push(val)?;
+                }
+                Opcode::SetGlobal => {
+                    let buff = [
+                        *self.instructions.data.get(ip + 1).expect("expected byte"),
+                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let global_index = u16::from_be_bytes(buff);
+                    ip += 2;
+                    let pop = self.pop();
+                    self.globals.insert(global_index as usize, pop);
+                }
             }
 
             ip += 1;
@@ -318,6 +347,26 @@ mod tests {
     struct VMTestCase {
         input: String,
         expected_top: Option<Object>,
+    }
+
+    #[test]
+    fn test_gobal_let_statement() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "let one = 1; one".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "let one = 1; let two = 2; one + two".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "let one = 1; let two = one + one; one + two".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
     }
 
     #[test]
