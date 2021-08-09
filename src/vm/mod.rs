@@ -13,6 +13,15 @@ const DEFAULT_STACK_SIZE: usize = 2048;
 
 const TRUE: Object = Object::Bool(true);
 const FALSE: Object = Object::Bool(false);
+const NULL: Object = Object::Null;
+
+fn is_truthy(obj: Object) -> bool {
+    match obj {
+        Object::Bool(b) => b,
+        Object::Null => false, // ?
+        _ => true,
+    }
+}
 
 pub struct VM {
     constants: Vec<Object>,
@@ -76,9 +85,30 @@ impl VM {
                 Opcode::Minus => {
                     self.execute_minus_operator()?;
                 }
+                Opcode::Jump => {
+                    let buff = [
+                        *self.instructions.data.get(ip + 1).expect("expected byte"),
+                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let jump_target = u16::from_be_bytes(buff);
+                    ip = jump_target as usize - 1;
+                }
+                Opcode::JumpNotTruthy => {
+                    let buff = [
+                        *self.instructions.data.get(ip + 1).expect("expected byte"),
+                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let jump_target = u16::from_be_bytes(buff);
+                    ip += 2;
+                    let condition = self.pop();
+                    if !is_truthy(condition) {
+                        ip = jump_target as usize - 1;
+                    }
+                }
                 Opcode::Pop => {
                     self.pop();
                 }
+                Opcode::Null => self.push(NULL)?,
             }
 
             ip += 1;
@@ -93,6 +123,7 @@ impl VM {
         match op {
             Object::Bool(true) => self.push(FALSE),
             Object::Bool(false) => self.push(TRUE),
+            Object::Null => self.push(TRUE),
             _ => self.push(FALSE),
         }
     }
@@ -290,6 +321,54 @@ mod tests {
     }
 
     #[test]
+    fn test_conditionals() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: "if (true) { 10 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: "if (true) { 10 } else { 20 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(20)),
+                input: "if (false) { 10 } else { 20 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: "if (1) { 10 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: "if (1 < 2) { 10 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: "if (1 < 2) { 10 } else { 20 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(20)),
+                input: "if (1 > 2) { 10 } else { 20 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "if (1 > 2) { 10 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "if (false) { 10 }".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(20)),
+                input: "if ((if (false) { 10 })) { 10 } else { 20 }".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
     fn test_integer_arithmetic() {
         let tests: Vec<VMTestCase> = vec![
             VMTestCase {
@@ -463,6 +542,10 @@ mod tests {
             VMTestCase {
                 expected_top: Some(Object::Bool(true)),
                 input: "!!5".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Bool(true)),
+                input: "!(if (false) {5;})".to_string(),
             },
         ];
 

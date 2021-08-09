@@ -1,10 +1,18 @@
 use crate::code::*;
-use crate::parser::ast::{Expression, Infix, Literal, Prefix, Statement};
+use crate::parser::ast::{BlockStatement, Expression, Infix, Literal, Prefix, Statement};
 use crate::Object;
+
+#[derive(Clone)]
+struct EmittedInstruction {
+    op: Opcode,
+    position: usize,
+}
 
 pub struct Compiler {
     instructions: Instructions,
     constants: Vec<Object>,
+    last_instruction: Option<EmittedInstruction>,
+    previous_instruction: Option<EmittedInstruction>,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -17,6 +25,8 @@ impl Compiler {
         return Compiler {
             instructions: Instructions { data: vec![] },
             constants: vec![],
+            last_instruction: None,
+            previous_instruction: None,
         };
     }
 
@@ -49,8 +59,63 @@ impl Compiler {
             Expression::Infix(i, exp_a, exp_b) => self.compile_infix(i, exp_a, exp_b),
             Expression::Prefix(p, exp) => self.compile_prefix(p, exp),
             Expression::Literal(literal) => self.compile_literal(literal),
+            Expression::If {
+                condition,
+                consequence,
+                alternative,
+            } => self.compile_if(condition, consequence, alternative),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
         }
+    }
+
+    fn compile_if(
+        &mut self,
+        condition: Box<Expression>,
+        consequence: BlockStatement,
+        alternative: Option<BlockStatement>,
+    ) -> Result<(), CompileError> {
+        self.compile_expression(*condition)?;
+        // this gets properly set later (back patching)
+        let jump_not_truthy_pos = self.emit(Opcode::JumpNotTruthy, Some(vec![9999]));
+        self.compile(consequence)?;
+
+        if self.last_instruction_is_pop() {
+            self.remove_last_pop();
+        }
+        // to be backpatched
+        let jump_pos = self.emit(Opcode::Jump, Some(vec![9999]));
+        let after_consequence_pos = self.instructions.data.len();
+        self.change_operand(
+            jump_not_truthy_pos,
+            Some(vec![after_consequence_pos as i32]),
+        );
+
+        if alternative.is_none() {
+            self.emit(Opcode::Null, None);
+        } else {
+            self.compile(alternative.unwrap())?;
+
+            if self.last_instruction_is_pop() {
+                self.remove_last_pop();
+            }
+        }
+        let after_alternative_pos = self.instructions.data.len();
+        self.change_operand(jump_pos, Some(vec![after_alternative_pos as i32]));
+
+        Ok(())
+    }
+
+    fn last_instruction_is_pop(&mut self) -> bool {
+        self.last_instruction.is_some() && self.last_instruction.as_ref().unwrap().op == Opcode::Pop
+    }
+
+    fn remove_last_pop(&mut self) {
+        // self.instructions
+        let pos = self.last_instruction.as_ref().unwrap().position;
+        while self.instructions.data.len() > pos {
+            self.instructions.data.pop();
+        }
+        self.last_instruction = self.previous_instruction.clone();
     }
 
     fn compile_prefix(&mut self, prefix: Prefix, exp: Box<Expression>) -> Result<(), CompileError> {
@@ -113,14 +178,35 @@ impl Compiler {
         Ok(())
     }
 
+    fn change_operand(&mut self, opcode_pos: usize, operands: Option<Vec<i32>>) {
+        let op = Opcode::from(self.instructions.data[opcode_pos]);
+        let new_instruction = make(op, operands).expect("expected result");
+        self.replace_instruction(opcode_pos, new_instruction.data);
+    }
+
+    fn replace_instruction(&mut self, pos: usize, new_instruction: Vec<u8>) {
+        for (i, ins) in new_instruction.iter().enumerate() {
+            self.instructions.data[pos + i] = *ins;
+        }
+    }
+
     fn add_constant(&mut self, obj: Object) -> usize {
         self.constants.push(obj);
         return self.constants.len() - 1;
     }
 
     fn emit(&mut self, op: Opcode, operands: Option<Vec<i32>>) -> usize {
-        let ins = make(op, operands);
-        return self.add_instruction(ins.expect("wanted valid instructions"));
+        let ins = make(op.clone(), operands);
+        let pos = self.add_instruction(ins.expect("wanted valid instructions"));
+        self.set_last_instruction(op, pos);
+        return pos;
+    }
+
+    fn set_last_instruction(&mut self, op: Opcode, pos: usize) {
+        let prev = self.last_instruction.clone();
+        let last = EmittedInstruction { op, position: pos };
+        self.previous_instruction = prev;
+        self.last_instruction = Some(last);
     }
 
     fn add_instruction(&mut self, ins: Instructions) -> usize {
@@ -161,6 +247,58 @@ mod tests {
         let l = lexer::Lexer::new(input);
         let mut p = parser::Parser::new(l);
         p.parse_program()
+    }
+
+    #[test]
+    fn test_conditionals() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "if (true) { 10 } else { 20 }; 3333;".to_string(),
+                expected_constants: vec![Object::Int(10), Object::Int(20), Object::Int(3333)],
+                expected_instructions: vec![
+                    // 00
+                    make(Opcode::True, None).unwrap(),
+                    // 01
+                    make(Opcode::JumpNotTruthy, Some(vec![10])).unwrap(),
+                    // 04
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    // 07
+                    make(Opcode::Jump, Some(vec![13])).unwrap(),
+                    // 10
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    // 13
+                    make(Opcode::Pop, None).unwrap(),
+                    // 14
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    // 17
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "if (true) { 10 }; 3333;".to_string(),
+                expected_constants: vec![Object::Int(10), Object::Int(3333)],
+                expected_instructions: vec![
+                    // 00
+                    make(Opcode::True, None).unwrap(),
+                    // 01
+                    make(Opcode::JumpNotTruthy, Some(vec![10])).unwrap(),
+                    // 04
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    // 07
+                    make(Opcode::Jump, Some(vec![11])).unwrap(),
+                    // 10
+                    make(Opcode::Null, None).unwrap(),
+                    // 11
+                    make(Opcode::Pop, None).unwrap(),
+                    // 12
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    // 15
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
     }
 
     #[test]
@@ -325,14 +463,14 @@ mod tests {
 
     fn run_compiler_test(tests: Vec<CompilerTestCase>) {
         for test in tests {
-            let program = parse(test.input);
+            let program = parse(test.input.clone());
             let mut c = Compiler::new();
             // println!("{:?}", program);
             let compile_result = c.compile(program);
             assert!(compile_result.is_ok());
 
             let bytecode = c.bytecode();
-            // println!("{:?}", bytecode);
+            println!("{:?}", test.input);
             let instruction_result =
                 test_instructions(test.expected_instructions, bytecode.instructions);
             assert!(instruction_result.is_ok());
@@ -347,7 +485,7 @@ mod tests {
         got: Instructions,
     ) -> Result<(), CompileError> {
         let concatted = concat_instructions(expected);
-
+        println!("len {}: {:?}", got.data.len(), got);
         if got.data.len() != concatted.data.len() {
             assert_eq!(concatted.data.len(), got.data.len());
         }

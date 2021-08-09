@@ -106,6 +106,9 @@ pub enum Opcode {
     GreaterThan = 10,
     Minus = 11,
     Bang = 12,
+    Jump = 13,
+    JumpNotTruthy = 14,
+    Null = 15,
 }
 
 impl From<u8> for Opcode {
@@ -124,6 +127,9 @@ impl From<u8> for Opcode {
             10 => return Opcode::GreaterThan,
             11 => return Opcode::Minus,
             12 => return Opcode::Bang,
+            13 => return Opcode::Jump,
+            14 => return Opcode::JumpNotTruthy,
+            15 => return Opcode::Null,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -147,7 +153,7 @@ pub enum MakeError {
 impl Opcode {
     pub fn widths(&self) -> Option<Vec<i16>> {
         match self {
-            Opcode::Constant => Some(vec![2]),
+            Opcode::Constant | Opcode::Jump | Opcode::JumpNotTruthy => Some(vec![2]),
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -159,13 +165,16 @@ impl Opcode {
             | Opcode::NotEqual
             | Opcode::Minus
             | Opcode::Bang
-            | Opcode::False => None,
+            | Opcode::False
+            | Opcode::Null => None,
         }
     }
 
     pub fn operand_width(&self) -> usize {
         match self {
-            Opcode::Constant => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
+            Opcode::Constant | Opcode::Jump | Opcode::JumpNotTruthy => {
+                self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize
+            } // expensive way to say 2
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -177,7 +186,8 @@ impl Opcode {
             | Opcode::NotEqual
             | Opcode::Minus
             | Opcode::Bang
-            | Opcode::False => 0,
+            | Opcode::False
+            | Opcode::Null => 0,
         }
     }
 }
