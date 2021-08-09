@@ -11,12 +11,12 @@ struct EmittedInstruction {
     position: usize,
 }
 
-pub struct Compiler {
+pub struct Compiler<'a> {
     instructions: Instructions,
-    constants: Vec<Object>,
+    constants: &'a mut Vec<Object>,
     last_instruction: Option<EmittedInstruction>,
     previous_instruction: Option<EmittedInstruction>,
-    pub symbol_table: SymbolTable,
+    pub symbol_table: &'a mut SymbolTable,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -24,22 +24,19 @@ pub enum CompileError {
     Reason(String),
 }
 
-impl Compiler {
-    pub fn new() -> Self {
-        return Compiler {
+impl<'a> Compiler<'a> {
+    // pub fn new() -> Self {
+    //     return ;
+    // }
+
+    pub fn new_with_state(st: &'a mut SymbolTable, constants: &'a mut Vec<Object>) -> Self {
+        Compiler {
             instructions: Instructions { data: vec![] },
-            constants: vec![],
+            constants: constants,
             last_instruction: None,
             previous_instruction: None,
-            symbol_table: SymbolTable::new(),
-        };
-    }
-
-    pub fn new_with_state(st: SymbolTable, constants: Vec<Object>) -> Self {
-        let mut result = Self::new();
-        result.symbol_table = st;
-        result.constants = constants;
-        result
+            symbol_table: st,
+        }
     }
 
     pub fn compile(&mut self, program: Vec<Statement>) -> Result<(), CompileError> {
@@ -535,7 +532,9 @@ mod tests {
     fn run_compiler_test(tests: Vec<CompilerTestCase>) {
         for test in tests {
             let program = parse(test.input.clone());
-            let mut c = Compiler::new();
+            let mut st = SymbolTable::new();
+            let mut constants: Vec<Object> = vec![];
+            let mut c = Compiler::new_with_state(&mut st, &mut constants);
             // println!("{:?}", program);
             let compile_result = c.compile(program);
             assert!(compile_result.is_ok());

@@ -54,21 +54,21 @@ fn main() {
             }
         }
         // println!("{:?}", st);
-        let mut comp = compiler::Compiler::new_with_state(st.clone(), constants.clone());
+        let mut comp = compiler::Compiler::new_with_state(&mut st, &mut constants);
         if let Err(e) = comp.compile(program) {
             println!("Compilation error: {:?}", e);
         }
 
         let code = comp.bytecode();
-        constants = code.constants.clone();
-        st = comp.symbol_table.clone();
+        // constants = code.constants.clone();
+        // st = comp.symbol_table.clone();
         // println!("{:?}", comp.symbol_table);
 
-        let mut machine = VM::new_with_global_store(code, globals.clone());
+        let mut machine = VM::new_with_global_store(code, &mut globals);
         if let Err(e) = machine.run() {
             println!("Error Executing Code: {:?}", e);
         }
-        globals = machine.globals.clone();
+        // globals = machine.globals.clone();
         if let Some(result) = machine.last_popped() {
             println!("{}", result);
         } else {

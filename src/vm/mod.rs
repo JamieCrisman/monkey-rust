@@ -24,30 +24,24 @@ fn is_truthy(obj: Object) -> bool {
     }
 }
 
-pub struct VM {
+pub struct VM<'a> {
     constants: Vec<Object>,
     instructions: Instructions,
     stack: Vec<Object>,
     sp: usize,
-    pub globals: Vec<Object>,
+    pub globals: &'a mut Vec<Object>,
     // stack_size: i32,
 }
 
-impl VM {
-    pub fn new(bytecode: Bytecode) -> Self {
-        return Self {
+impl<'a> VM<'a> {
+    pub fn new_with_global_store(bytecode: Bytecode, g: &'a mut Vec<Object>) -> Self {
+        Self {
             instructions: bytecode.instructions.clone(),
             constants: bytecode.constants.clone(),
             sp: 0,
             stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
-            globals: Vec::with_capacity(GLOBALS_SIZE),
-        };
-    }
-
-    pub fn new_with_global_store(bytecode: Bytecode, g: Vec<Object>) -> Self {
-        let mut result = Self::new(bytecode);
-        result.globals = g;
-        result
+            globals: g,
+        }
     }
 
     pub fn stack_top(&self) -> Option<Object> {
@@ -338,6 +332,7 @@ impl VM {
 mod tests {
     // use crate::evaluator::builtins::new_builtins;
     // use crate::code::*;
+    use crate::compiler::symbol_table::SymbolTable;
     use crate::compiler::*;
     use crate::evaluator::object::*;
     use crate::lexer;
@@ -610,11 +605,14 @@ mod tests {
     fn run_vm_test(tests: Vec<VMTestCase>) {
         for test in tests {
             let prog = parse(test.input);
-            let mut c = Compiler::new();
+            let mut st = SymbolTable::new();
+            let mut consts: Vec<Object> = vec![];
+            let mut c = Compiler::new_with_state(&mut st, &mut consts);
             let compile_result = c.compile(prog);
             assert!(compile_result.is_ok());
 
-            let mut vmm = VM::new(c.bytecode());
+            let mut globals: Vec<Object> = vec![];
+            let mut vmm = VM::new_with_global_store(c.bytecode(), &mut globals);
             let result = vmm.run();
             assert!(!result.is_err());
             let stack_elem = vmm.last_popped();
