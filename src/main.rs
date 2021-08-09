@@ -61,8 +61,8 @@ fn main() {
 
         let code = comp.bytecode();
         // constants = code.constants.clone();
-        // st = comp.symbol_table.clone();
-        // println!("{:?}", comp.symbol_table);
+        // // st = comp.symbol_table.clone();
+        // println!("{:?}", comp.bytecode());
 
         let mut machine = VM::new_with_global_store(code, &mut globals);
         if let Err(e) = machine.run() {

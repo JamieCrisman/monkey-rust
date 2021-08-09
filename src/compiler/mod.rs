@@ -201,6 +201,19 @@ impl<'a> Compiler<'a> {
                     self.emit(Opcode::False, None)
                 }
             }
+            Literal::String(s) => {
+                let operand = Some(vec![self.add_constant(Object::String(s)) as i32]);
+                self.emit(Opcode::Constant, operand)
+            }
+            Literal::Array(elements) => {
+                let size = Some(vec![elements.len() as i32]);
+                for element in elements {
+                    // println!("element: {:?}", element);
+                    self.compile_expression(element)?;
+                }
+                self.emit(Opcode::Array, size);
+                return Ok(());
+            }
             _ => return Err(CompileError::Reason("Not Implemented".to_string())),
         };
         Ok(())
@@ -275,6 +288,86 @@ mod tests {
         let l = lexer::Lexer::new(input);
         let mut p = parser::Parser::new(l);
         p.parse_program()
+    }
+
+    #[test]
+    fn test_array_literals() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "[]".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::Array, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "[1, 2, 3]".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2), Object::Int(3)],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Array, Some(vec![3])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "[1 + 2, 3 - 4, 5 * 6]".to_string(),
+                expected_constants: vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::Int(3),
+                    Object::Int(4),
+                    Object::Int(5),
+                    Object::Int(6),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Add, None).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Subtract, None).unwrap(),
+                    make(Opcode::Constant, Some(vec![4])).unwrap(),
+                    make(Opcode::Constant, Some(vec![5])).unwrap(),
+                    make(Opcode::Multiply, None).unwrap(),
+                    make(Opcode::Array, Some(vec![3])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
+    }
+
+    #[test]
+    fn test_string_expression() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "\"monkey\"".to_string(),
+                expected_constants: vec![Object::String("monkey".to_string())],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "\"mon\" + \"key\"".to_string(),
+                expected_constants: vec![
+                    Object::String("mon".to_string()),
+                    Object::String("key".to_string()),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Add, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
     }
 
     #[test]
@@ -540,7 +633,7 @@ mod tests {
             assert!(compile_result.is_ok());
 
             let bytecode = c.bytecode();
-            println!("{:?}", test.input);
+            // println!("{:?}", test.input);
             let instruction_result =
                 test_instructions(test.expected_instructions, bytecode.instructions);
             assert!(instruction_result.is_ok());
@@ -560,8 +653,8 @@ mod tests {
             assert_eq!(concatted.data.len(), got.data.len());
         }
 
-        // println!("{:?}", result_list);
-        // println!("{:?}", concatted);
+        println!("{:?}", got.data);
+        println!("{:?}", concatted.data);
         for (i, ins) in concatted.data.iter().enumerate() {
             assert_eq!(got.data.get(i).unwrap(), ins);
             // if got.get(i).unwrap() != ins {
@@ -592,7 +685,11 @@ mod tests {
             match c {
                 Object::Int(v) => match got.get(i).unwrap() {
                     Object::Int(v2) => assert_eq!(v, v2),
-                    _ => {}
+                    _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
+                },
+                Object::String(s) => match got.get(i).unwrap() {
+                    Object::String(s2) => assert_eq!(s, s2),
+                    _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
                 },
                 _ => {}
             }

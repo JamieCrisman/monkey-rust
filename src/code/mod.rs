@@ -111,6 +111,7 @@ pub enum Opcode {
     Null = 15,
     GetGlobal = 16,
     SetGlobal = 17,
+    Array = 18,
 }
 
 impl From<u8> for Opcode {
@@ -134,6 +135,7 @@ impl From<u8> for Opcode {
             15 => return Opcode::Null,
             16 => return Opcode::GetGlobal,
             17 => return Opcode::SetGlobal,
+            18 => return Opcode::Array,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -161,7 +163,8 @@ impl Opcode {
             | Opcode::Jump
             | Opcode::JumpNotTruthy
             | Opcode::GetGlobal
-            | Opcode::SetGlobal => Some(vec![2]),
+            | Opcode::SetGlobal
+            | Opcode::Array => Some(vec![2]),
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -184,7 +187,8 @@ impl Opcode {
             | Opcode::Jump
             | Opcode::JumpNotTruthy
             | Opcode::GetGlobal
-            | Opcode::SetGlobal => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
+            | Opcode::SetGlobal
+            | Opcode::Array => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract

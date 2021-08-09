@@ -132,12 +132,39 @@ impl<'a> VM<'a> {
                     let pop = self.pop();
                     self.globals.insert(global_index as usize, pop);
                 }
+                Opcode::Array => {
+                    let buff = [
+                        *self.instructions.data.get(ip + 1).expect("expected byte"),
+                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let element_count = u16::from_be_bytes(buff);
+                    ip += 2;
+                    let array = self.build_array(self.sp - element_count as usize, self.sp);
+                    self.push(array)?;
+                }
             }
 
             ip += 1;
         }
 
         Ok(())
+    }
+
+    fn build_array(&mut self, start_index: usize, end_index: usize) -> Object {
+        let mut elements: Vec<Object> = vec![];
+
+        if start_index != end_index {
+            for pos in start_index..end_index {
+                let item = self
+                    .stack
+                    .get(pos)
+                    .expect("expected a valid index position")
+                    .clone();
+                elements.push(item);
+            }
+        }
+
+        return Object::Array(elements);
     }
 
     fn execute_bang_operator(&mut self) -> Result<(), VMError> {
@@ -255,6 +282,9 @@ impl<'a> VM<'a> {
             (ObjectType::Int, ObjectType::Int) => {
                 self.execute_binary_integer_operation(op, left, right)?;
             }
+            (ObjectType::String, ObjectType::String) => {
+                self.execute_binary_string_operation(op, left, right)?;
+            }
             (a, b) => {
                 return Err(VMError::Reason(format!(
                     "Unsupported binary action for {:?} and {:?}",
@@ -264,6 +294,40 @@ impl<'a> VM<'a> {
         };
 
         // self.push(Object::Int(left + right))?;
+
+        Ok(())
+    }
+
+    fn execute_binary_string_operation(
+        &mut self,
+        op: Opcode,
+        left: Object,
+        right: Object,
+    ) -> Result<(), VMError> {
+        let left_val = match left {
+            Object::String(s) => s,
+            _ => return Err(VMError::Reason("Unexpected type".to_string())),
+        };
+        let right_val = match right {
+            Object::String(s) => s,
+            _ => return Err(VMError::Reason("Unexpected type".to_string())),
+        };
+
+        match op {
+            Opcode::Add => {
+                self.push(Object::String(format!("{}{}", left_val, right_val)))?;
+            }
+            // Opcode::Divide => {
+            //     self.push(Object::Int(left_val / right_val))?;
+            // }
+            // Opcode::Multiply => {
+            //     self.push(Object::Int(left_val * right_val))?;
+            // }
+            // Opcode::Subtract => {
+            //     self.push(Object::Int(left_val - right_val))?;
+            // }
+            _ => return Err(VMError::Reason("Unexpected string operation".to_string())),
+        }
 
         Ok(())
     }
@@ -478,6 +542,54 @@ mod tests {
             VMTestCase {
                 expected_top: Some(Object::Int(50)),
                 input: "(5 + 10 * 2 + 15 / 3) * 2 + -10".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_string_expression() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::String("monkey".to_string())),
+                input: "\"monkey\"".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::String("monkey".to_string())),
+                input: "\"mon\" + \"key\"".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::String("monkeybanana".to_string())),
+                input: "\"mon\" + \"key\"+ \"banana\"".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_array_literals() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Array(vec![])),
+                input: "[]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Array(vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::Int(3),
+                ])),
+                input: "[1,2,3]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Array(vec![
+                    Object::Int(3),
+                    Object::Int(12),
+                    Object::Int(11),
+                ])),
+                input: "[1+2,3*4,5+6]".to_string(),
             },
         ];
 
