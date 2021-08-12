@@ -7,17 +7,15 @@ use super::VMError;
 
 #[derive(Debug, Clone)]
 pub struct Frame {
-    pub func: Object, // CompiledFunction
+    // pub func: Object, // CompiledFunction
+    pub instr: Instructions,
     pub ip: i64,
 }
 
 impl Frame {
     pub fn new(func: Object) -> Result<Self, VMError> {
         match func {
-            Object::CompiledFunction(instr) => Ok(Self {
-                func: Object::CompiledFunction(instr),
-                ip: -1,
-            }),
+            Object::CompiledFunction(instr) => Ok(Self { instr, ip: -1 }),
             _ => Err(VMError::Reason(
                 "Invalid object type for frame, expected compiled function".to_string(),
             )),
@@ -25,9 +23,6 @@ impl Frame {
     }
 
     pub fn instructions(&self) -> Option<Instructions> {
-        match self.func.borrow() {
-            Object::CompiledFunction(i) => Some(i.clone()),
-            _ => None,
-        }
+        Some(self.instr.clone())
     }
 }

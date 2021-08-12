@@ -1,5 +1,5 @@
 mod frame;
-use std::collections::HashMap;
+use std::{borrow::Borrow, collections::HashMap, ops::Deref};
 
 use crate::{
     code::{Instructions, Opcode},
@@ -31,45 +31,54 @@ fn is_truthy(obj: Object) -> bool {
 
 pub struct VM<'a> {
     constants: Vec<Object>,
-    instructions: Instructions,
+    // instructions: Instructions,
     stack: Vec<Object>,
     sp: usize,
     pub globals: &'a mut Vec<Object>,
     // stack_size: i32,
-    // frames: Vec<Frame>,
-    // frames_index: i32,
+    frames: Vec<Frame>,
+    frames_index: i32,
 }
 
 impl<'a> VM<'a> {
     pub fn new_with_global_store(bytecode: Bytecode, g: &'a mut Vec<Object>) -> Self {
-        // let frames = vec![
-        //     Frame::new(Object::CompiledFunction(bytecode.instructions.clone()))
-        //         .expect("expected a valid main"),
-        // ];
+        let mut frames = vec![
+            Frame::new(Object::CompiledFunction(bytecode.instructions.clone()))
+                .expect("expected a valid main"),
+        ];
+        frames[0].ip += 1;
         Self {
-            instructions: bytecode.instructions.clone(),
+            // instructions: bytecode.instructions.clone(),
             constants: bytecode.constants.clone(),
             sp: 0,
             stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
             globals: g,
-            // frames,
-            // frames_index: 1,
+            frames,
+            frames_index: 1,
         }
     }
 
-    // fn current_frame(&self) -> Frame {
-    //     return self.frames[(self.frames_index - 1) as usize];
-    // }
+    fn current_frame(&mut self) -> &Frame {
+        return self
+            .frames
+            .get((self.frames_index - 1) as usize)
+            .as_ref()
+            .unwrap();
+    }
 
-    // fn push_frame(&mut self, f: Frame) {
-    //     self.frames.push(f);
-    //     self.frames_index += 1;
-    // }
+    fn set_ip(&mut self, new_ip: i64) {
+        self.frames[(self.frames_index - 1) as usize].ip = new_ip;
+    }
 
-    // fn pop_frame(&mut self) -> Frame {
-    //     self.frames_index -= 1;
-    //     return self.frames.pop().unwrap();
-    // }
+    fn push_frame(&mut self, f: Frame) {
+        self.frames.push(f);
+        self.frames_index += 1;
+    }
+
+    fn pop_frame(&mut self) -> Frame {
+        self.frames_index -= 1;
+        return self.frames.pop().unwrap();
+    }
 
     pub fn stack_top(&self) -> Option<Object> {
         if self.sp == 0 {
@@ -88,17 +97,56 @@ impl<'a> VM<'a> {
         // for instr in self.instructions.data.iter() {
 
         // }
-        let mut ip: usize = 0;
-        while ip < self.instructions.data.len() {
-            let op = Opcode::from(*self.instructions.data.get(ip).expect("expected byte"));
+        // let mut ip: usize = self.current_frame().ip as usize;
+        while (self.current_frame().ip as usize)
+            < self
+                .current_frame()
+                .instructions()
+                .expect("expected instructions")
+                .data
+                .len()
+        {
+            // let a = self.current_frame().ip;
+            // println!(
+            //     "ip {} of {}",
+            //     a,
+            //     self.current_frame()
+            //         .instructions()
+            //         .expect("expected instructions")
+            //         .data
+            //         .len()
+            // );
+            let ip = self.current_frame().ip as usize;
+            // self.set_ip(ip as i64);
+            let op = Opcode::from(
+                *self
+                    .current_frame()
+                    .instructions()
+                    .expect("expected instructions")
+                    .data
+                    .get(ip)
+                    .expect("expected byte"),
+            );
+            // println!(" ------- got opcode: {:?} ip: {}", op, ip);
+            let mut cur_instructions = self
+                .current_frame()
+                .instructions()
+                .expect("expected instructions");
+            // println!("{:?}", cur_instructions.data);
             match op {
                 Opcode::Constant => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
+                    // println!("ip 1,2 {},{}", ip + 1, ip + 2);
                     let const_index = u16::from_be_bytes(buff);
-                    ip += op.operand_width() as usize;
+                    let new_ip = self.current_frame().ip + op.operand_width() as i64;
+                    self.set_ip(new_ip);
+                    // println!("got const from index: {}, new ip {}", const_index, new_ip);
+                    // println!("actual curr ip {}", self.current_frame().ip);
+                    // println!("instructions {:?}", cur_instructions.data);
+                    // println!("constants {:?}", self.constants);
                     self.push(self.constants.get(const_index as usize).unwrap().clone())?;
                 }
                 Opcode::Add | Opcode::Divide | Opcode::Multiply | Opcode::Subtract => {
@@ -117,22 +165,22 @@ impl<'a> VM<'a> {
                 }
                 Opcode::Jump => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let jump_target = u16::from_be_bytes(buff);
-                    ip = jump_target as usize - 1;
+                    self.set_ip(jump_target as i64 - 1);
                 }
                 Opcode::JumpNotTruthy => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let jump_target = u16::from_be_bytes(buff);
-                    ip += 2;
+                    self.set_ip((ip + 2) as i64);
                     let condition = self.pop();
                     if !is_truthy(condition) {
-                        ip = jump_target as usize - 1;
+                        self.set_ip((jump_target - 1) as i64);
                     }
                 }
                 Opcode::Pop => {
@@ -141,41 +189,41 @@ impl<'a> VM<'a> {
                 Opcode::Null => self.push(NULL)?,
                 Opcode::GetGlobal => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let global_index = u16::from_be_bytes(buff);
-                    ip += 2;
+                    self.set_ip((ip + 2) as i64);
                     let val = (*self.globals.get(global_index as usize).unwrap()).clone();
                     self.push(val)?;
                 }
                 Opcode::SetGlobal => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let global_index = u16::from_be_bytes(buff);
-                    ip += 2;
+                    self.set_ip((ip + 2) as i64);
                     let pop = self.pop();
                     self.globals.insert(global_index as usize, pop);
                 }
                 Opcode::Array => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let element_count = u16::from_be_bytes(buff);
-                    ip += 2;
+                    self.set_ip((ip + 2) as i64);
                     let array = self.build_array(self.sp - element_count as usize, self.sp);
                     self.push(array)?;
                 }
                 Opcode::Hash => {
                     let buff = [
-                        *self.instructions.data.get(ip + 1).expect("expected byte"),
-                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
                     ];
                     let element_count = u16::from_be_bytes(buff);
-                    ip += 2;
+                    self.set_ip((ip + 2) as i64);
                     let hash = self.build_hash(self.sp - element_count as usize, self.sp);
                     self.sp -= element_count as usize;
                     self.push(hash)?;
@@ -185,12 +233,40 @@ impl<'a> VM<'a> {
                     let left = self.pop();
                     self.execute_index_expression(left, index)?;
                 }
-                Opcode::Call => {}
-                Opcode::Return => {}
-                Opcode::ReturnValue => {}
+                Opcode::Call => {
+                    let func = match self.stack[self.sp - 1].clone() {
+                        Object::CompiledFunction(instr) => instr,
+                        _ => return Err(VMError::Reason("expected function".to_string())),
+                    };
+                    self.push_frame(
+                        Frame::new(Object::CompiledFunction(func))
+                            .expect("expected to create new frame"),
+                    );
+                    // cur_instructions = self
+                    //     .current_frame()
+                    //     .instructions()
+                    //     .expect("expected instructions");
+                }
+                Opcode::Return => {
+                    self.pop_frame();
+                    self.pop();
+                    self.push(Object::Null)?
+                }
+                Opcode::ReturnValue => {
+                    let ret_val = self.pop();
+                    self.pop_frame();
+                    self.pop();
+                    self.push(ret_val)?;
+                    // cur_instructions = self
+                    //     .current_frame()
+                    //     .instructions()
+                    //     .expect("expected instructions");
+                }
             }
 
-            ip += 1;
+            let next_ip = self.current_frame().ip + 1;
+            self.set_ip(next_ip);
+            // println!("ending at ---- {}", self.current_frame().ip);
         }
 
         Ok(())
@@ -285,7 +361,6 @@ impl<'a> VM<'a> {
 
     fn build_array(&mut self, start_index: usize, end_index: usize) -> Object {
         let mut elements: Vec<Object> = vec![];
-
         if start_index != end_index {
             for pos in start_index..end_index {
                 let item = self
@@ -808,6 +883,56 @@ mod tests {
                 ])),
                 input: "[1+2,3*4,5+6]".to_string(),
             },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_function_calls() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(15)),
+                input: "let fun = fn() { 5 + 10; }; fun();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "let one = fn() { 1; }; let two = fn() {2}; one() + two();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "let a = fn() { 1; }; let b = fn() {a() + 1}; let c = fn() {b() + 1}; c();"
+                    .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(5)),
+                input: "let fun = fn() { return 5;10; }; fun();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(5)),
+                input: "let fun = fn() { return 5; return 10; }; fun();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "let fun = fn() { }; fun();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "let fun = fn() { }; let funner = fn() {fun()}; fun(); funner();"
+                    .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "let fun = fn() { 1; }; let funner = fn() {fun}; funner()();".to_string(),
+            },
+            // VMTestCase {
+            //     expected_top: Some(Object::Array(vec![
+            //         Object::Int(1),
+            //         Object::Int(2),
+            //         Object::Int(3),
+            //     ])),
+            //     input: "[1,2,3]".to_string(),
+            // },
         ];
 
         run_vm_test(tests);
