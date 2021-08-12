@@ -1,4 +1,5 @@
 pub mod symbol_table;
+
 use crate::code::*;
 use crate::parser::ast::{BlockStatement, Expression, Ident, Infix, Literal, Prefix, Statement};
 use crate::Object;
@@ -11,11 +12,19 @@ struct EmittedInstruction {
     position: usize,
 }
 
-pub struct Compiler<'a> {
+pub struct CompilationScope {
     instructions: Instructions,
-    constants: &'a mut Vec<Object>,
     last_instruction: Option<EmittedInstruction>,
     previous_instruction: Option<EmittedInstruction>,
+}
+
+pub struct Compiler<'a> {
+    // instructions: Instructions,
+    constants: &'a mut Vec<Object>,
+    // last_instruction: Option<EmittedInstruction>,
+    // previous_instruction: Option<EmittedInstruction>,
+    scope_index: usize,
+    scopes: Vec<CompilationScope>,
     pub symbol_table: &'a mut SymbolTable,
 }
 
@@ -31,11 +40,17 @@ impl<'a> Compiler<'a> {
 
     pub fn new_with_state(st: &'a mut SymbolTable, constants: &'a mut Vec<Object>) -> Self {
         Compiler {
-            instructions: Instructions { data: vec![] },
+            // instructions: Instructions { data: vec![] },
             constants: constants,
-            last_instruction: None,
-            previous_instruction: None,
+            // last_instruction: None,
+            // previous_instruction: None,
             symbol_table: st,
+            scope_index: 0,
+            scopes: vec![CompilationScope {
+                instructions: Instructions { data: vec![] },
+                last_instruction: None,
+                previous_instruction: None,
+            }],
         }
     }
 
@@ -57,9 +72,23 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Statement::Let(l, e) => self.compile_let(l, e),
-            // Statement::Return(e) => self.compile_return(r),
+            Statement::Return(e) => self.compile_return(e),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
         }
+    }
+
+    fn compile_return(&mut self, e: Expression) -> Result<(), CompileError> {
+        self.compile_expression(e)?;
+        self.emit(Opcode::ReturnValue, None);
+        Ok(())
+    }
+
+    fn current_instructions(&mut self) -> Option<Instructions> {
+        let instructions = match self.scopes.get(self.scope_index) {
+            Some(s) => s.instructions.clone(),
+            None => return None,
+        };
+        return Some(instructions);
     }
 
     fn compile_expression(&mut self, exp: Expression) -> Result<(), CompileError> {
@@ -85,14 +114,72 @@ impl<'a> Compiler<'a> {
                 consequence,
                 alternative,
             } => self.compile_if(condition, consequence, alternative),
+            Expression::Index(expr, ind_expr) => self.compile_index(expr, ind_expr),
+            Expression::Func { params, body } => self.compile_function(params, body),
+            Expression::Call { args, func } => self.compile_call(args, func),
             _ => Err(CompileError::Reason("Not Implemented".to_string())),
         }
+    }
+
+    fn compile_call(
+        &mut self,
+        _args: Vec<Expression>,
+        func: Box<Expression>,
+    ) -> Result<(), CompileError> {
+        self.compile_expression(*func)?;
+        self.emit(Opcode::Call, None);
+        Ok(())
+    }
+
+    fn compile_function(
+        &mut self,
+        _params: Vec<Ident>,
+        body: BlockStatement,
+    ) -> Result<(), CompileError> {
+        self.enter_scope();
+        self.compile(body)?;
+        if self.last_instruction_is(Opcode::Pop) {
+            self.replace_last_pop_with_return();
+        }
+        if !self.last_instruction_is(Opcode::ReturnValue) {
+            self.emit(Opcode::Return, None);
+        }
+        let instr = self.leave_scope();
+        let compiled_fn = Object::CompiledFunction(instr);
+        let constant_val = Some(vec![self.add_constant(compiled_fn) as i32]);
+        self.emit(Opcode::Constant, constant_val);
+        Ok(())
+    }
+
+    fn replace_last_pop_with_return(&mut self) {
+        let last_pos = self.scopes[self.scope_index]
+            .last_instruction
+            .as_ref()
+            .unwrap()
+            .position;
+        self.replace_instruction(last_pos, make(Opcode::ReturnValue, None).unwrap().data);
+        self.scopes[self.scope_index]
+            .last_instruction
+            .as_mut()
+            .unwrap()
+            .op = Opcode::ReturnValue;
     }
 
     fn compile_let(&mut self, l: Ident, e: Expression) -> Result<(), CompileError> {
         self.compile_expression(e)?;
         let symbol = self.symbol_table.define(l.0.as_str());
         self.emit(Opcode::SetGlobal, Some(vec![symbol.index as i32]));
+        Ok(())
+    }
+
+    fn compile_index(
+        &mut self,
+        expr: Box<Expression>,
+        ind_expr: Box<Expression>,
+    ) -> Result<(), CompileError> {
+        self.compile_expression(*expr)?;
+        self.compile_expression(*ind_expr)?;
+        self.emit(Opcode::Index, None);
         Ok(())
     }
 
@@ -107,12 +194,12 @@ impl<'a> Compiler<'a> {
         let jump_not_truthy_pos = self.emit(Opcode::JumpNotTruthy, Some(vec![9999]));
         self.compile(consequence)?;
 
-        if self.last_instruction_is_pop() {
+        if self.last_instruction_is(Opcode::Pop) {
             self.remove_last_pop();
         }
         // to be backpatched
         let jump_pos = self.emit(Opcode::Jump, Some(vec![9999]));
-        let after_consequence_pos = self.instructions.data.len();
+        let after_consequence_pos = self.scopes[self.scope_index].instructions.data.len();
         self.change_operand(
             jump_not_truthy_pos,
             Some(vec![after_consequence_pos as i32]),
@@ -123,27 +210,45 @@ impl<'a> Compiler<'a> {
         } else {
             self.compile(alternative.unwrap())?;
 
-            if self.last_instruction_is_pop() {
+            if self.last_instruction_is(Opcode::Pop) {
                 self.remove_last_pop();
             }
         }
-        let after_alternative_pos = self.instructions.data.len();
+        let after_alternative_pos = self.scopes[self.scope_index].instructions.data.len();
         self.change_operand(jump_pos, Some(vec![after_alternative_pos as i32]));
 
         Ok(())
     }
 
-    fn last_instruction_is_pop(&mut self) -> bool {
-        self.last_instruction.is_some() && self.last_instruction.as_ref().unwrap().op == Opcode::Pop
+    fn last_instruction_is(&mut self, op: Opcode) -> bool {
+        self.scopes
+            .get(self.scope_index)
+            .unwrap()
+            .last_instruction
+            .is_some()
+            && self
+                .scopes
+                .get(self.scope_index)
+                .unwrap()
+                .last_instruction
+                .as_ref()
+                .unwrap()
+                .op
+                == op
     }
 
     fn remove_last_pop(&mut self) {
         // self.instructions
-        let pos = self.last_instruction.as_ref().unwrap().position;
-        while self.instructions.data.len() > pos {
-            self.instructions.data.pop();
+        let pos = self.scopes[self.scope_index]
+            .last_instruction
+            .as_ref()
+            .unwrap()
+            .position;
+        while self.scopes[self.scope_index].instructions.data.len() > pos {
+            self.scopes[self.scope_index].instructions.data.pop();
         }
-        self.last_instruction = self.previous_instruction.clone();
+        self.scopes[self.scope_index].last_instruction =
+            self.scopes[self.scope_index].previous_instruction.clone();
     }
 
     fn compile_prefix(&mut self, prefix: Prefix, exp: Box<Expression>) -> Result<(), CompileError> {
@@ -214,20 +319,35 @@ impl<'a> Compiler<'a> {
                 self.emit(Opcode::Array, size);
                 return Ok(());
             }
+            Literal::Hash(hash) => {
+                // TODO:: sort by hash key?
+
+                for (k, v) in hash.iter() {
+                    self.compile_expression(k.clone())?;
+                    self.compile_expression(v.clone())?;
+                }
+                self.emit(Opcode::Hash, Some(vec![(hash.len() * 2) as i32]));
+
+                return Ok(());
+            }
             _ => return Err(CompileError::Reason("Not Implemented".to_string())),
         };
         Ok(())
     }
 
     fn change_operand(&mut self, opcode_pos: usize, operands: Option<Vec<i32>>) {
-        let op = Opcode::from(self.instructions.data[opcode_pos]);
+        let op = Opcode::from(
+            self.current_instructions()
+                .expect("expected instructions to exist")
+                .data[opcode_pos],
+        );
         let new_instruction = make(op, operands).expect("expected result");
         self.replace_instruction(opcode_pos, new_instruction.data);
     }
 
     fn replace_instruction(&mut self, pos: usize, new_instruction: Vec<u8>) {
         for (i, ins) in new_instruction.iter().enumerate() {
-            self.instructions.data[pos + i] = *ins;
+            self.scopes[self.scope_index].instructions.data[pos + i] = *ins;
         }
     }
 
@@ -244,24 +364,53 @@ impl<'a> Compiler<'a> {
     }
 
     fn set_last_instruction(&mut self, op: Opcode, pos: usize) {
-        let prev = self.last_instruction.clone();
+        let prev = self
+            .scopes
+            .get(self.scope_index)
+            .unwrap()
+            .last_instruction
+            .clone();
         let last = EmittedInstruction { op, position: pos };
-        self.previous_instruction = prev;
-        self.last_instruction = Some(last);
+        self.scopes[self.scope_index].previous_instruction = prev;
+        self.scopes[self.scope_index].last_instruction = Some(last);
     }
 
     fn add_instruction(&mut self, ins: Instructions) -> usize {
-        let pos = self.instructions.data.len();
+        let pos = match self.current_instructions() {
+            Some(instr) => instr.data.len(),
+            None => 0,
+        };
         let mut ins_copy = ins.clone();
-        self.instructions.data.append(&mut ins_copy.data);
+        self.scopes[self.scope_index]
+            .instructions
+            .data
+            .append(&mut ins_copy.data);
         return pos;
     }
 
     pub fn bytecode(&self) -> Bytecode {
         return Bytecode {
-            instructions: self.instructions.clone(),
+            instructions: self.scopes[self.scope_index].instructions.clone(),
             constants: self.constants.clone(),
         };
+    }
+
+    fn enter_scope(&mut self) {
+        let scope = CompilationScope {
+            instructions: Instructions { data: vec![] },
+            last_instruction: None,
+            previous_instruction: None,
+        };
+        self.scopes.push(scope);
+        self.scope_index += 1;
+    }
+
+    fn leave_scope(&mut self) -> Instructions {
+        let results = self.current_instructions();
+
+        self.scopes.pop();
+        self.scope_index -= 1;
+        return results.unwrap();
     }
 }
 
@@ -284,10 +433,213 @@ mod tests {
         expected_instructions: Vec<Instructions>,
     }
 
+    fn test_compiler_scopes() {
+        let mut st = SymbolTable::new();
+        let mut constants: Vec<Object> = vec![];
+        let mut c = Compiler::new_with_state(&mut st, &mut constants);
+        c.emit(Opcode::Multiply, None);
+        c.enter_scope();
+        assert_eq!(1, c.scope_index);
+        c.emit(Opcode::Subtract, None);
+        assert_eq!(
+            1,
+            c.scopes.get(c.scope_index).unwrap().instructions.data.len()
+        );
+
+        let last = c
+            .scopes
+            .get(c.scope_index)
+            .unwrap()
+            .last_instruction
+            .clone()
+            .unwrap();
+        assert_eq!(Opcode::Subtract, last.op);
+        c.leave_scope();
+        assert_eq!(0, c.scope_index);
+        c.emit(Opcode::Add, None);
+        assert_eq!(
+            2,
+            c.scopes.get(c.scope_index).unwrap().instructions.data.len()
+        );
+        let last2 = c
+            .scopes
+            .get(c.scope_index)
+            .unwrap()
+            .last_instruction
+            .clone()
+            .unwrap();
+        assert_eq!(Opcode::Add, last2.op);
+        let previous = c
+            .scopes
+            .get(c.scope_index)
+            .unwrap()
+            .previous_instruction
+            .clone()
+            .unwrap();
+        assert_eq!(Opcode::Multiply, previous.op);
+    }
+
     fn parse(input: String) -> parser::ast::Program {
         let l = lexer::Lexer::new(input);
         let mut p = parser::Parser::new(l);
         p.parse_program()
+    }
+
+    #[test]
+    fn test_functions() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "fn() { return 5 + 10 }".to_string(),
+                expected_constants: vec![
+                    Object::Int(5),
+                    Object::Int(10),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::Constant, Some(vec![1])).unwrap(),
+                        make(Opcode::Add, None).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "fn() { 5 + 10 }".to_string(),
+                expected_constants: vec![
+                    Object::Int(5),
+                    Object::Int(10),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::Constant, Some(vec![1])).unwrap(),
+                        make(Opcode::Add, None).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "fn() { 1; 2 }".to_string(),
+                expected_constants: vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::Pop, None).unwrap(),
+                        make(Opcode::Constant, Some(vec![1])).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "fn() { }".to_string(),
+                expected_constants: vec![Object::CompiledFunction(concat_instructions(vec![
+                    make(Opcode::Return, None).unwrap(),
+                ]))],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
+    }
+
+    #[test]
+    fn test_function_calls() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "fn() { 24 }()".to_string(),
+                expected_constants: vec![
+                    Object::Int(24),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Call, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let noArg = fn() { 24 };noArg();".to_string(),
+                expected_constants: vec![
+                    Object::Int(24),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Call, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
+    }
+
+    #[test]
+    fn test_index_expression() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "[1, 2, 3][1+1]".to_string(),
+                expected_constants: vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::Int(3),
+                    Object::Int(1),
+                    Object::Int(1),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Array, Some(vec![3])).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Constant, Some(vec![4])).unwrap(),
+                    make(Opcode::Add, None).unwrap(),
+                    make(Opcode::Index, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "{1: 2}[2-1]".to_string(),
+                expected_constants: vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::Int(2),
+                    Object::Int(1),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Hash, Some(vec![2])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Subtract, None).unwrap(),
+                    make(Opcode::Index, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
     }
 
     #[test]
@@ -362,6 +714,66 @@ mod tests {
                     make(Opcode::Constant, Some(vec![0])).unwrap(),
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
                     make(Opcode::Add, None).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
+    }
+
+    #[test]
+    fn test_hash_literal() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "{}".to_string(),
+                expected_constants: vec![],
+                expected_instructions: vec![
+                    make(Opcode::Hash, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "{1:2,3:4,5:6}".to_string(),
+                expected_constants: vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::Int(3),
+                    Object::Int(4),
+                    Object::Int(5),
+                    Object::Int(6),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Constant, Some(vec![4])).unwrap(),
+                    make(Opcode::Constant, Some(vec![5])).unwrap(),
+                    make(Opcode::Hash, Some(vec![6])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "{1:2+3,4:5*6}".to_string(),
+                expected_constants: vec![
+                    Object::Int(1),
+                    Object::Int(2),
+                    Object::Int(3),
+                    Object::Int(4),
+                    Object::Int(5),
+                    Object::Int(6),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Add, None).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Constant, Some(vec![4])).unwrap(),
+                    make(Opcode::Constant, Some(vec![5])).unwrap(),
+                    make(Opcode::Multiply, None).unwrap(),
+                    make(Opcode::Hash, Some(vec![4])).unwrap(),
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },
@@ -630,7 +1042,13 @@ mod tests {
             let mut c = Compiler::new_with_state(&mut st, &mut constants);
             // println!("{:?}", program);
             let compile_result = c.compile(program);
-            assert!(compile_result.is_ok());
+            assert!(
+                compile_result.is_ok(),
+                "{:?}",
+                compile_result
+                    .err()
+                    .unwrap_or(CompileError::Reason("uh... not sure".to_string()))
+            );
 
             let bytecode = c.bytecode();
             // println!("{:?}", test.input);
@@ -689,6 +1107,12 @@ mod tests {
                 },
                 Object::String(s) => match got.get(i).unwrap() {
                     Object::String(s2) => assert_eq!(s, s2),
+                    _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
+                },
+                Object::CompiledFunction(Instructions { data }) => match got.get(i).unwrap() {
+                    Object::CompiledFunction(Instructions { data: data2 }) => {
+                        assert_eq!(data, data2)
+                    }
                     _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
                 },
                 _ => {}

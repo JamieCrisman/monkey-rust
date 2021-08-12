@@ -1,8 +1,13 @@
+mod frame;
+use std::collections::HashMap;
+
 use crate::{
     code::{Instructions, Opcode},
     compiler::Bytecode,
     evaluator::object::{Object, ObjectType},
 };
+
+use self::frame::Frame;
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum VMError {
@@ -31,18 +36,40 @@ pub struct VM<'a> {
     sp: usize,
     pub globals: &'a mut Vec<Object>,
     // stack_size: i32,
+    // frames: Vec<Frame>,
+    // frames_index: i32,
 }
 
 impl<'a> VM<'a> {
     pub fn new_with_global_store(bytecode: Bytecode, g: &'a mut Vec<Object>) -> Self {
+        // let frames = vec![
+        //     Frame::new(Object::CompiledFunction(bytecode.instructions.clone()))
+        //         .expect("expected a valid main"),
+        // ];
         Self {
             instructions: bytecode.instructions.clone(),
             constants: bytecode.constants.clone(),
             sp: 0,
             stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
             globals: g,
+            // frames,
+            // frames_index: 1,
         }
     }
+
+    // fn current_frame(&self) -> Frame {
+    //     return self.frames[(self.frames_index - 1) as usize];
+    // }
+
+    // fn push_frame(&mut self, f: Frame) {
+    //     self.frames.push(f);
+    //     self.frames_index += 1;
+    // }
+
+    // fn pop_frame(&mut self) -> Frame {
+    //     self.frames_index -= 1;
+    //     return self.frames.pop().unwrap();
+    // }
 
     pub fn stack_top(&self) -> Option<Object> {
         if self.sp == 0 {
@@ -142,12 +169,118 @@ impl<'a> VM<'a> {
                     let array = self.build_array(self.sp - element_count as usize, self.sp);
                     self.push(array)?;
                 }
+                Opcode::Hash => {
+                    let buff = [
+                        *self.instructions.data.get(ip + 1).expect("expected byte"),
+                        *self.instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let element_count = u16::from_be_bytes(buff);
+                    ip += 2;
+                    let hash = self.build_hash(self.sp - element_count as usize, self.sp);
+                    self.sp -= element_count as usize;
+                    self.push(hash)?;
+                }
+                Opcode::Index => {
+                    let index = self.pop();
+                    let left = self.pop();
+                    self.execute_index_expression(left, index)?;
+                }
+                Opcode::Call => {}
+                Opcode::Return => {}
+                Opcode::ReturnValue => {}
             }
 
             ip += 1;
         }
 
         Ok(())
+    }
+
+    fn execute_index_expression(&mut self, left: Object, index: Object) -> Result<(), VMError> {
+        if left.object_type() == ObjectType::Array && index.object_type() == ObjectType::Int {
+            return self.execute_array_index(left, index);
+        } else if left.object_type() == ObjectType::Hash {
+            return self.execute_hash_index(left, index);
+        } else {
+            return Err(VMError::Reason(format!(
+                "index operator not supported for {:?}",
+                left.object_type()
+            )));
+        }
+    }
+
+    fn execute_array_index(&mut self, left: Object, index: Object) -> Result<(), VMError> {
+        let index_val = match index {
+            Object::Int(i) => i,
+            _ => {
+                return Err(VMError::Reason(format!(
+                    "expected array type, but got {:?}",
+                    left.object_type()
+                )))
+            }
+        };
+
+        match left {
+            Object::Array(a) => {
+                let max = (a.len() - 1) as i64;
+                if index_val < 0 || index_val > max {
+                    return self.push(Object::Null);
+                }
+
+                return self.push(
+                    a.get(index_val as usize)
+                        .expect("expected a value from index")
+                        .clone(),
+                );
+            }
+            _ => {
+                return Err(VMError::Reason(format!(
+                    "expected array type, but got {:?}",
+                    left.object_type()
+                )))
+            }
+        }
+    }
+
+    fn execute_hash_index(&mut self, left: Object, index: Object) -> Result<(), VMError> {
+        match left {
+            Object::Hash(h) => {
+                let val = match h.get(&index) {
+                    Some(v) => v.clone(),
+                    None => Object::Null,
+                };
+                return self.push(val);
+            }
+            _ => {
+                return Err(VMError::Reason(format!(
+                    "expected array type, but got {:?}",
+                    left.object_type()
+                )))
+            }
+        }
+    }
+
+    fn build_hash(&mut self, start_index: usize, end_index: usize) -> Object {
+        let mut map: HashMap<Object, Object> = HashMap::new();
+
+        let mut i = start_index;
+        while i < end_index {
+            let key: Object = self
+                .stack
+                .get(i)
+                .expect("expected a value from stack")
+                .clone();
+            let value: Object = self
+                .stack
+                .get(i + 1)
+                .expect("expected a value from stack")
+                .clone();
+            map.insert(key, value);
+
+            i += 2;
+        }
+
+        Object::Hash(map)
     }
 
     fn build_array(&mut self, start_index: usize, end_index: usize) -> Object {
@@ -402,6 +535,7 @@ mod tests {
     use crate::lexer;
     use crate::parser;
     use crate::vm::VM;
+    use std::collections::HashMap;
 
     struct VMTestCase {
         input: String,
@@ -562,6 +696,89 @@ mod tests {
             VMTestCase {
                 expected_top: Some(Object::String("monkeybanana".to_string())),
                 input: "\"mon\" + \"key\"+ \"banana\"".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_hash_literal() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Hash(HashMap::new())),
+                input: "{}".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Hash(
+                    [
+                        (Object::Int(1), Object::Int(2)),
+                        (Object::Int(2), Object::Int(3)),
+                    ]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                )),
+                input: "{1: 2, 2: 3}".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Hash(
+                    [
+                        (Object::Int(2), Object::Int(4)),
+                        (Object::Int(6), Object::Int(16)),
+                    ]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                )),
+                input: "{1 + 1: 2*2, 3+3: 4*4}".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    fn test_index_expression() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "[1,2,3][1]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "[1,2,3][0 + 2]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "[[1,1,1]][0][0]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "[][0]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "[1][-1]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "[1][1]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "{1: 1, 2:2}[1]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(2)),
+                input: "{1: 1, 2:2}[2]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "{1: 1, 2:2}[0]".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "{}[0]".to_string(),
             },
         ];
 

@@ -1,3 +1,4 @@
+use crate::code::Instructions;
 use crate::evaluator::env::*;
 use crate::parser::ast::*;
 use std::cell::RefCell;
@@ -20,6 +21,7 @@ pub enum Object {
     Null,
     ReturnValue(Box<Object>),
     Error(String),
+    CompiledFunction(Instructions),
 }
 
 impl Object {
@@ -35,6 +37,7 @@ impl Object {
             Object::Null => ObjectType::Null,
             Object::ReturnValue(_) => ObjectType::ReturnValue,
             Object::Error(_) => ObjectType::Error,
+            Object::CompiledFunction(_) => ObjectType::CompiledFunction,
         }
     }
 }
@@ -51,6 +54,7 @@ pub enum ObjectType {
     Null,
     ReturnValue,
     Error,
+    CompiledFunction,
 }
 
 impl fmt::Display for Object {
@@ -96,6 +100,7 @@ impl fmt::Display for Object {
             Object::Null => write!(f, "null"),
             Object::ReturnValue(ref value) => write!(f, "{}", value),
             Object::Error(ref value) => write!(f, "{}", value),
+            Object::CompiledFunction(ref value) => write!(f, "{}", value),
         }
     }
 }

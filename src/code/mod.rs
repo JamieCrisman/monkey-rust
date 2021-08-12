@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Instructions {
     pub data: Vec<u8>,
 }
@@ -112,6 +112,11 @@ pub enum Opcode {
     GetGlobal = 16,
     SetGlobal = 17,
     Array = 18,
+    Hash = 19,
+    Index = 20,
+    Call = 21,
+    ReturnValue = 22,
+    Return = 23,
 }
 
 impl From<u8> for Opcode {
@@ -136,6 +141,11 @@ impl From<u8> for Opcode {
             16 => return Opcode::GetGlobal,
             17 => return Opcode::SetGlobal,
             18 => return Opcode::Array,
+            19 => return Opcode::Hash,
+            20 => return Opcode::Index,
+            21 => return Opcode::Call,
+            22 => return Opcode::ReturnValue,
+            23 => return Opcode::Return,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -164,7 +174,8 @@ impl Opcode {
             | Opcode::JumpNotTruthy
             | Opcode::GetGlobal
             | Opcode::SetGlobal
-            | Opcode::Array => Some(vec![2]),
+            | Opcode::Array
+            | Opcode::Hash => Some(vec![2]),
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -177,7 +188,11 @@ impl Opcode {
             | Opcode::Minus
             | Opcode::Bang
             | Opcode::False
-            | Opcode::Null => None,
+            | Opcode::Null
+            | Opcode::Index
+            | Opcode::Call
+            | Opcode::ReturnValue
+            | Opcode::Return => None,
         }
     }
 
@@ -188,7 +203,8 @@ impl Opcode {
             | Opcode::JumpNotTruthy
             | Opcode::GetGlobal
             | Opcode::SetGlobal
-            | Opcode::Array => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
+            | Opcode::Array
+            | Opcode::Hash => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -201,7 +217,11 @@ impl Opcode {
             | Opcode::Minus
             | Opcode::Bang
             | Opcode::False
-            | Opcode::Null => 0,
+            | Opcode::Null
+            | Opcode::Index
+            | Opcode::Call
+            | Opcode::ReturnValue
+            | Opcode::Return => 0,
         }
     }
 }
