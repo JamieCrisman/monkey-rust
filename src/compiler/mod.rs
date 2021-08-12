@@ -783,6 +783,84 @@ mod tests {
     }
 
     #[test]
+    fn test_let_scopes() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "let one = 100; fn() { one; };".to_string(),
+                expected_constants: vec![
+                    Object::Int(100),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            // CompilerTestCase {
+            //     input: "fn() { let one = 100; one; };".to_string(),
+            //     expected_constants: vec![
+            //         Object::Int(100),
+            //         Object::CompiledFunction(concat_instructions(vec![
+            //             make(Opcode::Constant, Some(vec![0])).unwrap(),
+            //             make(Opcode::SetLocal, Some(vec![0])).unwrap(),
+            //             make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+            //             make(Opcode::ReturnValue, None).unwrap(),
+            //         ])),
+            //     ],
+            //     expected_instructions: vec![
+            //         make(Opcode::Constant, Some(vec![1])).unwrap(),
+            //         make(Opcode::Pop, None).unwrap(),
+            //     ],
+            // },
+            // CompilerTestCase {
+            //     input: "fn() { let one = 100; let two = 200; one+two };".to_string(),
+            //     expected_constants: vec![
+            //         Object::Int(100),
+            //         Object::CompiledFunction(concat_instructions(vec![
+            //             make(Opcode::Constant, Some(vec![0])).unwrap(),
+            //             make(Opcode::SetLocal, Some(vec![0])).unwrap(),
+            //             make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+            //             make(Opcode::ReturnValue, None).unwrap(),
+            //         ])),
+            //     ],
+            //     expected_instructions: vec![
+            //         make(Opcode::Constant, Some(vec![1])).unwrap(),
+            //         make(Opcode::Pop, None).unwrap(),
+            //     ],
+            // },
+            // CompilerTestCase {
+            //     input: "let one = 1; one;".to_string(),
+            //     expected_constants: vec![Object::Int(1)],
+            //     expected_instructions: vec![
+            //         make(Opcode::Constant, Some(vec![0])).unwrap(),
+            //         make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+            //         make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+            //         make(Opcode::Pop, None).unwrap(),
+            //     ],
+            // },
+            // CompilerTestCase {
+            //     input: "let one = 1; let two = one; two;".to_string(),
+            //     expected_constants: vec![Object::Int(1)],
+            //     expected_instructions: vec![
+            //         make(Opcode::Constant, Some(vec![0])).unwrap(),
+            //         make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+            //         make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+            //         make(Opcode::SetGlobal, Some(vec![1])).unwrap(),
+            //         make(Opcode::GetGlobal, Some(vec![1])).unwrap(),
+            //         make(Opcode::Pop, None).unwrap(),
+            //     ],
+            // },
+        ];
+
+        run_compiler_test(tests);
+    }
+
+    #[test]
     fn test_global_let() {
         let tests: Vec<CompilerTestCase> = vec![
             CompilerTestCase {

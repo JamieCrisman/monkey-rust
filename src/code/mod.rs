@@ -77,6 +77,10 @@ impl fmt::Display for Instructions {
                         let data = [*self.data.get(1).unwrap(), *self.data.get(2).unwrap()];
                         values.push(u16::from_be_bytes(data));
                     }
+                    1 => {
+                        let value = *self.data.get(1).unwrap() as u16;
+                        values.push(value);
+                    }
                     _ => {}
                 }
             }
@@ -117,6 +121,8 @@ pub enum Opcode {
     Call = 21,
     ReturnValue = 22,
     Return = 23,
+    GetLocal = 24,
+    SetLocal = 25,
 }
 
 impl From<u8> for Opcode {
@@ -146,6 +152,8 @@ impl From<u8> for Opcode {
             21 => return Opcode::Call,
             22 => return Opcode::ReturnValue,
             23 => return Opcode::Return,
+            24 => return Opcode::GetLocal,
+            25 => return Opcode::SetLocal,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -176,6 +184,7 @@ impl Opcode {
             | Opcode::SetGlobal
             | Opcode::Array
             | Opcode::Hash => Some(vec![2]),
+            Opcode::SetLocal | Opcode::GetLocal => Some(vec![1]),
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -204,6 +213,8 @@ impl Opcode {
             | Opcode::GetGlobal
             | Opcode::SetGlobal
             | Opcode::Array
+            | Opcode::SetLocal
+            | Opcode::GetLocal
             | Opcode::Hash => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
             Opcode::Add
             | Opcode::Divide
@@ -266,6 +277,11 @@ pub fn make(op: Opcode, operands: Option<Vec<i32>>) -> Result<Instructions, Make
                                 result[offset + ii] = *b;
                             }
                         }
+                        1 => {
+                            for b in (*o as i16).to_be_bytes().iter() {
+                                result[offset] = *b;
+                            }
+                        }
                         _ => {}
                     }
                     offset += *v as usize;
@@ -304,6 +320,14 @@ mod tests {
                 },
                 None,
             ),
+            (
+                Opcode::GetLocal,
+                vec![255],
+                Instructions {
+                    data: vec![Opcode::GetLocal as u8, 255],
+                },
+                None,
+            ),
         ];
 
         for test in tests {
@@ -320,6 +344,7 @@ mod tests {
             for (ind, val) in test.2.data.iter().enumerate() {
                 assert_eq!(val, r.data.get(ind).expect("expected a value"));
             }
+            println!(" - ok");
         }
     }
 
@@ -334,12 +359,13 @@ mod tests {
                 make(Opcode::True, None).unwrap(),
                 make(Opcode::False, None).unwrap(),
                 make(Opcode::Pop, None).unwrap(),
+                make(Opcode::GetLocal, Some(vec![1])).unwrap(),
             ],
         };
 
         let result = format!("{}", instr);
         assert_eq!(
-            "0000 Add\n0001 Constant 65534\n0004 Constant 1\n0007 Constant 2\n0010 True\n0011 False\n0012 Pop\n",
+            "0000 Add\n0001 Constant 65534\n0004 Constant 1\n0007 Constant 2\n0010 True\n0011 False\n0012 Pop\n0013 GetLocal 1\n",
             result
         );
     }

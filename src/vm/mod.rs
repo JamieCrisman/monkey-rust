@@ -262,6 +262,8 @@ impl<'a> VM<'a> {
                     //     .instructions()
                     //     .expect("expected instructions");
                 }
+                Opcode::GetLocal => {}
+                Opcode::SetLocal => {}
             }
 
             let next_ip = self.current_frame().ip + 1;
