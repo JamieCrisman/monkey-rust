@@ -120,15 +120,15 @@ impl VM {
             let init_ip = self.current_frame().ip;
             self.set_ip((init_ip + 1) as i64);
             let ip = self.current_frame().ip as usize;
-            let instr = self.current_frame().instructions().unwrap();
-            println!("cur ip {} instr: {:?}", ip, instr);
+            // let instr = self.current_frame().instructions().unwrap();
+            // println!("cur ip {} instr: {:?}", ip, instr);
             // self.set_ip(ip as i64);
             let cur_instructions = self
                 .current_frame()
                 .instructions()
                 .expect("expected instructions");
             let op = Opcode::from(*cur_instructions.data.get(ip).expect("expected byte"));
-            println!(" ------- got opcode: {:?} ip: {} sp: {}", op, ip, self.sp);
+            // println!(" ------- got opcode: {:?} ip: {} sp: {}", op, ip, self.sp);
 
             // println!("{:?}", cur_instructions.data);
             match op {
@@ -144,8 +144,8 @@ impl VM {
                     // println!("got const from index: {}, new ip {}", const_index, new_ip);
                     // println!("actual curr ip {}", self.current_frame().ip);
                     // println!("instructions {:?}", cur_instructions.data);
-                    println!("sp {} stack {:?}", self.sp, self.stack);
-                    println!("const (ind: {}) {:?}", const_index, self.constants);
+                    // println!("sp {} stack {:?}", self.sp, self.stack);
+                    // println!("const (ind: {}) {:?}", const_index, self.constants);
 
                     self.push(self.constants.get(const_index as usize).unwrap().clone())?;
                 }
@@ -293,10 +293,10 @@ impl VM {
                         .clone() as i64;
                     self.set_ip((ip + 1) as i64);
                     let base_pointer = self.current_frame().base_pointer;
-                    println!(
-                        " -- local_index: {} base_pointer: {}",
-                        local_index, base_pointer
-                    );
+                    // println!(
+                    //     " -- local_index: {} base_pointer: {}",
+                    //     local_index, base_pointer
+                    // );
                     self.stack[(base_pointer + local_index) as usize] = self.pop();
                 }
             }
@@ -1175,7 +1175,7 @@ mod tests {
 
     fn run_vm_test(tests: Vec<VMTestCase>) {
         for test in tests {
-            println!("--- testing: {}", test.input);
+            // println!("--- testing: {}", test.input);
             let prog = parse(test.input);
             let st = Rc::new(RefCell::new(SymbolTable::new()));
             let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
