@@ -243,24 +243,13 @@ impl VM {
                     self.execute_index_expression(left, index)?;
                 }
                 Opcode::Call => {
-                    let (instructions, num_locals) = match self.stack[self.sp - 1].clone() {
-                        Object::CompiledFunction {
-                            instructions,
-                            num_locals,
-                        } => (instructions, num_locals),
-                        _ => return Err(VMError::Reason("expected function".to_string())),
-                    };
-                    let new_frame = Frame::new(instructions, num_locals, self.sp as i64);
-                    let bp = new_frame.base_pointer;
-                    self.push_frame(new_frame);
-                    for _i in 0..num_locals {
-                        self.push(Object::Null)?;
-                    }
-                    self.sp = (bp + (num_locals as i64)) as usize;
-                    // cur_instructions = self
-                    //     .current_frame()
-                    //     .instructions()
-                    //     .expect("expected instructions");
+                    let arg_count = cur_instructions
+                        .data
+                        .get(ip + 1)
+                        .expect("expected byte")
+                        .clone() as i64;
+                    self.set_ip((ip + 1) as i64);
+                    self.execute_call_function(arg_count)?;
                 }
                 Opcode::Return => {
                     let f = self.pop_frame();
@@ -307,6 +296,33 @@ impl VM {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn execute_call_function(&mut self, args: i64) -> Result<(), VMError> {
+        let (instructions, num_locals, num_parameters) =
+            match self.stack[self.sp - 1 - (args as usize)].clone() {
+                Object::CompiledFunction {
+                    instructions,
+                    num_locals,
+                    num_parameters,
+                } => (instructions, num_locals, num_parameters),
+                _ => return Err(VMError::Reason("expected function".to_string())),
+            };
+        if num_parameters != args as i32 {
+            return Err(VMError::Reason(format!(
+                "wrong number of arguments: want {} but got {}",
+                num_parameters, args,
+            )));
+        }
+        let new_frame = Frame::new(instructions, num_locals, self.sp as i64 - args);
+        let bp = new_frame.base_pointer;
+        self.push_frame(new_frame);
+        for _i in 0..num_locals {
+            self.push(Object::Null)?;
+        }
+        self.sp = (bp + (num_locals as i64)) as usize;
 
         Ok(())
     }
@@ -645,7 +661,7 @@ mod tests {
     use crate::evaluator::object::*;
     use crate::lexer;
     use crate::parser;
-    use crate::vm::VM;
+    use crate::vm::{VMError, VM};
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::rc::Rc;
@@ -1022,6 +1038,105 @@ mod tests {
     }
 
     #[test]
+    fn test_function_calls_with_args_and_bindings() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(4)),
+                input: r#"
+            let identity = fn(a) { a };
+            identity(4);
+            "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: r#"
+          let sum = fn(a,b) { a+b };
+          sum(1,2);
+          "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: r#"
+          let sum = fn(a,b) { let c = a+b; c };
+          sum(1,2);
+          "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: r#"
+          let sum = fn(a,b) { let c = a+b; c };
+          sum(1,2) + sum(3,4);
+          "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: r#"
+          let sum = fn(a,b) { let c = a+b; c };
+          let outer = fn() {sum(1,2) + sum(3,4)};
+          outer();
+          "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(50)),
+                input: r#"
+          let global = 10;
+          let sum = fn(a,b) {
+              let c = a + b;
+              c + global;
+          };
+          let outer = fn() {
+              sum(1,2) + sum(3,4) + global;
+          };
+          outer() + global;
+          "#
+                .to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_function_calls_with_wrong_args() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Error(
+                    "wrong number of arguments: want 0 but got 1".to_string(),
+                )),
+                input: r#"
+            fn() { 1; }(1);
+            "#
+                .to_string(),
+            },
+            // VMTestCase {
+            //     expected_top: Some(Object::Error(
+            //         "wrong number of arguments: want 1 but got 0".to_string(),
+            //     )),
+            //     input: r#"
+            //   fn(a){a}();
+            //   "#
+            //     .to_string(),
+            // },
+            //     VMTestCase {
+            //         expected_top: Some(Object::Error(
+            //             "wrong number of arguments: want 2 but got 1".to_string(),
+            //         )),
+            //         input: r#"
+            //   fn(a,b){a+b}(1);
+            //   "#
+            //         .to_string(),
+            //     },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
     fn test_first_class_function_calls() {
         let tests: Vec<VMTestCase> = vec![
             VMTestCase {
@@ -1187,10 +1302,22 @@ mod tests {
             let globals: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
             let mut vmm = VM::new_with_global_store(c.bytecode(), globals);
             let result = vmm.run();
-            assert!(!result.is_err());
-            let stack_elem = vmm.last_popped();
-
-            assert_eq!(stack_elem, test.expected_top);
+            match test.expected_top.clone() {
+                Some(Object::Error(e)) => {
+                    assert!(result.is_err());
+                    match result.err().unwrap() {
+                        VMError::Reason(e2) => {
+                            assert_eq!(e, e2);
+                        }
+                    }
+                }
+                Some(_) => {
+                    assert!(!result.is_err());
+                    let stack_elem = vmm.last_popped();
+                    assert_eq!(stack_elem, test.expected_top);
+                }
+                None => {}
+            }
         }
     }
 }

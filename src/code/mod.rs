@@ -184,7 +184,7 @@ impl Opcode {
             | Opcode::SetGlobal
             | Opcode::Array
             | Opcode::Hash => Some(vec![2]),
-            Opcode::SetLocal | Opcode::GetLocal => Some(vec![1]),
+            Opcode::SetLocal | Opcode::GetLocal | Opcode::Call => Some(vec![1]),
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -199,7 +199,6 @@ impl Opcode {
             | Opcode::False
             | Opcode::Null
             | Opcode::Index
-            | Opcode::Call
             | Opcode::ReturnValue
             | Opcode::Return => None,
         }
@@ -215,7 +214,8 @@ impl Opcode {
             | Opcode::Array
             | Opcode::SetLocal
             | Opcode::GetLocal
-            | Opcode::Hash => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 2
+            | Opcode::Call
+            | Opcode::Hash => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 1/2
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -230,7 +230,6 @@ impl Opcode {
             | Opcode::False
             | Opcode::Null
             | Opcode::Index
-            | Opcode::Call
             | Opcode::ReturnValue
             | Opcode::Return => 0,
         }

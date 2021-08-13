@@ -133,20 +133,29 @@ impl Compiler {
 
     fn compile_call(
         &mut self,
-        _args: Vec<Expression>,
+        args: Vec<Expression>,
         func: Box<Expression>,
     ) -> Result<(), CompileError> {
         self.compile_expression(*func)?;
-        self.emit(Opcode::Call, None);
+        let len = args.len() as i32;
+        for a in args {
+            self.compile_expression(a)?;
+        }
+        self.emit(Opcode::Call, Some(vec![len]));
         Ok(())
     }
 
     fn compile_function(
         &mut self,
-        _params: Vec<Ident>,
+        params: Vec<Ident>,
         body: BlockStatement,
     ) -> Result<(), CompileError> {
         self.enter_scope();
+        let param_len = params.len() as i32;
+        for p in params {
+            self.symbol_table.borrow_mut().define(p.0.as_str());
+        }
+
         self.compile(body)?;
         if self.last_instruction_is(Opcode::Pop) {
             self.replace_last_pop_with_return();
@@ -160,6 +169,7 @@ impl Compiler {
         let compiled_fn = Object::CompiledFunction {
             instructions: instr,
             num_locals: num_locals as i32,
+            num_parameters: param_len,
         };
         let constant_val = Some(vec![self.add_constant(compiled_fn) as i32]);
         self.emit(Opcode::Constant, constant_val);
@@ -544,6 +554,7 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 0,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
@@ -564,6 +575,7 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 0,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
@@ -584,6 +596,7 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 0,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
@@ -596,6 +609,7 @@ mod tests {
                 expected_constants: vec![Object::CompiledFunction {
                     instructions: concat_instructions(vec![make(Opcode::Return, None).unwrap()]),
                     num_locals: 0,
+                    num_parameters: 0,
                 }],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![0])).unwrap(),
@@ -620,11 +634,12 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 0,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
-                    make(Opcode::Call, None).unwrap(),
+                    make(Opcode::Call, Some(vec![0])).unwrap(),
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },
@@ -638,13 +653,112 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 0,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
                     make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
                     make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
-                    make(Opcode::Call, None).unwrap(),
+                    make(Opcode::Call, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let aArg = fn(a) { };aArg(24);".to_string(),
+                expected_constants: vec![
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(
+                            vec![make(Opcode::Return, None).unwrap()],
+                        ),
+                        num_parameters: 1,
+                        num_locals: 1,
+                    },
+                    Object::Int(24),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Call, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let someArgs = fn(a,b,c) { };someArgs(24,25,26);".to_string(),
+                expected_constants: vec![
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(
+                            vec![make(Opcode::Return, None).unwrap()],
+                        ),
+                        num_locals: 3,
+                        num_parameters: 3,
+                    },
+                    Object::Int(24),
+                    Object::Int(25),
+                    Object::Int(26),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Call, Some(vec![3])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let someArg = fn(a) { a };someArg(24);".to_string(),
+                expected_constants: vec![
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 1,
+                        num_parameters: 1,
+                    },
+                    Object::Int(24),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Call, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "let someArg = fn(a, b, c) { a;b;c };someArg(24,25,26);".to_string(),
+                expected_constants: vec![
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+                            make(Opcode::Pop, None).unwrap(),
+                            make(Opcode::GetLocal, Some(vec![1])).unwrap(),
+                            make(Opcode::Pop, None).unwrap(),
+                            make(Opcode::GetLocal, Some(vec![2])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 3,
+                        num_parameters: 3,
+                    },
+                    Object::Int(24),
+                    Object::Int(25),
+                    Object::Int(26),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::SetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Constant, Some(vec![3])).unwrap(),
+                    make(Opcode::Call, Some(vec![3])).unwrap(),
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },
@@ -854,6 +968,7 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 0,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
@@ -875,6 +990,7 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 1,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
@@ -899,6 +1015,7 @@ mod tests {
                             make(Opcode::ReturnValue, None).unwrap(),
                         ]),
                         num_locals: 2,
+                        num_parameters: 0,
                     },
                 ],
                 expected_instructions: vec![
@@ -1187,9 +1304,10 @@ mod tests {
 
     fn run_compiler_test(tests: Vec<CompilerTestCase>) {
         for test in tests {
+            println!("testing {}", test.input);
             let program = parse(test.input.clone());
-            let mut st = Rc::new(RefCell::new(SymbolTable::new()));
-            let mut constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
+            let st = Rc::new(RefCell::new(SymbolTable::new()));
+            let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
             let mut c = Compiler::new_with_state(st, constants);
             // println!("{:?}", program);
             let compile_result = c.compile(program);
@@ -1263,13 +1381,16 @@ mod tests {
                 Object::CompiledFunction {
                     instructions: Instructions { data },
                     num_locals,
+                    num_parameters,
                 } => match got.get(i).unwrap() {
                     Object::CompiledFunction {
                         instructions: Instructions { data: data2 },
                         num_locals: locals2,
+                        num_parameters: params2,
                     } => {
                         assert_eq!(data, data2);
                         assert_eq!(num_locals, locals2);
+                        assert_eq!(num_parameters, params2);
                     }
                     _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
                 },

@@ -24,6 +24,7 @@ pub enum Object {
     CompiledFunction {
         instructions: Instructions,
         num_locals: i32,
+        num_parameters: i32,
     },
 }
 
@@ -43,6 +44,7 @@ impl Object {
             Object::CompiledFunction {
                 instructions: _,
                 num_locals: _,
+                num_parameters: _,
             } => ObjectType::CompiledFunction,
         }
     }
@@ -109,7 +111,12 @@ impl fmt::Display for Object {
             Object::CompiledFunction {
                 instructions: _,
                 num_locals,
-            } => write!(f, "Compiled Function with {} locals", num_locals),
+                num_parameters,
+            } => write!(
+                f,
+                "Compiled Function with {} locals and {} parameters",
+                num_locals, num_parameters
+            ),
         }
     }
 }
