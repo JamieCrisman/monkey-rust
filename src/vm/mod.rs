@@ -1,4 +1,5 @@
 mod frame;
+use core::num;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::{borrow::Borrow, collections::HashMap, ops::Deref};
@@ -44,16 +45,13 @@ pub struct VM {
 
 impl VM {
     pub fn new_with_global_store(bytecode: Bytecode, g: Rc<RefCell<Vec<Object>>>) -> Self {
-        let mut frames = vec![
-            Frame::new(Object::CompiledFunction(bytecode.instructions.clone()))
-                .expect("expected a valid main"),
-        ];
-        frames[0].ip += 1;
+        let frames = vec![Frame::new(bytecode.instructions.clone(), 0, 0)];
+        // frames[0].ip += 1;
         Self {
             // instructions: bytecode.instructions.clone(),
             constants: bytecode.constants.clone(),
             sp: 0,
-            stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
+            stack: vec![Object::Null; DEFAULT_STACK_SIZE],
             globals: g,
             frames,
             frames_index: 1,
@@ -100,40 +98,38 @@ impl VM {
 
         // }
         // let mut ip: usize = self.current_frame().ip as usize;
-        while (self.current_frame().ip as usize)
-            < self
+        // let fin = self.frames_index;
+        // println!(
+        //     "ind {} cur {:?}",
+        //     fin,
+        //     self.current_frame() // self.current_frame()
+        //                          //     .instructions()
+        //                          //     .expect("expected instructions")
+        //                          //     .data
+        //                          //     .len()
+        // );
+        while self.current_frame().ip
+            < (self
                 .current_frame()
                 .instructions()
                 .expect("expected instructions")
                 .data
-                .len()
+                .len() as i64
+                - 1)
         {
-            // let a = self.current_frame().ip;
-            // println!(
-            //     "ip {} of {}",
-            //     a,
-            //     self.current_frame()
-            //         .instructions()
-            //         .expect("expected instructions")
-            //         .data
-            //         .len()
-            // );
+            let init_ip = self.current_frame().ip;
+            self.set_ip((init_ip + 1) as i64);
             let ip = self.current_frame().ip as usize;
+            let instr = self.current_frame().instructions().unwrap();
+            println!("cur ip {} instr: {:?}", ip, instr);
             // self.set_ip(ip as i64);
-            let op = Opcode::from(
-                *self
-                    .current_frame()
-                    .instructions()
-                    .expect("expected instructions")
-                    .data
-                    .get(ip)
-                    .expect("expected byte"),
-            );
-            // println!(" ------- got opcode: {:?} ip: {}", op, ip);
-            let mut cur_instructions = self
+            let cur_instructions = self
                 .current_frame()
                 .instructions()
                 .expect("expected instructions");
+            let op = Opcode::from(*cur_instructions.data.get(ip).expect("expected byte"));
+            println!(" ------- got opcode: {:?} ip: {} sp: {}", op, ip, self.sp);
+
             // println!("{:?}", cur_instructions.data);
             match op {
                 Opcode::Constant => {
@@ -148,7 +144,9 @@ impl VM {
                     // println!("got const from index: {}, new ip {}", const_index, new_ip);
                     // println!("actual curr ip {}", self.current_frame().ip);
                     // println!("instructions {:?}", cur_instructions.data);
-                    // println!("constants {:?}", self.constants);
+                    println!("sp {} stack {:?}", self.sp, self.stack);
+                    println!("const (ind: {}) {:?}", const_index, self.constants);
+
                     self.push(self.constants.get(const_index as usize).unwrap().clone())?;
                 }
                 Opcode::Add | Opcode::Divide | Opcode::Multiply | Opcode::Subtract => {
@@ -242,41 +240,66 @@ impl VM {
                     self.execute_index_expression(left, index)?;
                 }
                 Opcode::Call => {
-                    let func = match self.stack[self.sp - 1].clone() {
-                        Object::CompiledFunction(instr) => instr,
+                    let (instructions, num_locals) = match self.stack[self.sp - 1].clone() {
+                        Object::CompiledFunction {
+                            instructions,
+                            num_locals,
+                        } => (instructions, num_locals),
                         _ => return Err(VMError::Reason("expected function".to_string())),
                     };
-                    self.push_frame(
-                        Frame::new(Object::CompiledFunction(func))
-                            .expect("expected to create new frame"),
-                    );
+                    let new_frame = Frame::new(instructions, num_locals, self.sp as i64);
+                    let bp = new_frame.base_pointer;
+                    self.push_frame(new_frame);
+                    self.sp = (bp + (num_locals as i64)) as usize;
                     // cur_instructions = self
                     //     .current_frame()
                     //     .instructions()
                     //     .expect("expected instructions");
                 }
                 Opcode::Return => {
-                    self.pop_frame();
+                    let f = self.pop_frame();
                     self.pop();
+                    self.sp = (f.base_pointer - 1) as usize;
+
                     self.push(Object::Null)?
                 }
                 Opcode::ReturnValue => {
                     let ret_val = self.pop();
-                    self.pop_frame();
-                    self.pop();
+                    let f = self.pop_frame();
+                    self.sp = (f.base_pointer - 1) as usize;
+                    // self.pop();
                     self.push(ret_val)?;
                     // cur_instructions = self
                     //     .current_frame()
                     //     .instructions()
                     //     .expect("expected instructions");
                 }
-                Opcode::GetLocal => {}
-                Opcode::SetLocal => {}
+                Opcode::GetLocal => {
+                    let local_index = cur_instructions
+                        .data
+                        .get(ip + 1)
+                        .expect("expected byte")
+                        .clone() as i64;
+                    self.set_ip((ip + 1) as i64);
+                    let base_pointer = self.current_frame().base_pointer;
+                    let val = self.stack[(base_pointer + local_index) as usize].clone();
+                    self.push(val)?;
+                }
+                Opcode::SetLocal => {
+                    let local_index = cur_instructions
+                        .data
+                        .get(ip + 1)
+                        .expect("expected byte")
+                        .clone() as i64;
+                    self.set_ip((ip + 1) as i64);
+                    let base_pointer = self.current_frame().base_pointer;
+                    println!(
+                        " -- local_index: {} base_pointer: {}",
+                        local_index, base_pointer
+                    );
+                    self.stack[(base_pointer + local_index) as usize] = self.pop();
+                }
             }
-
-            let next_ip = self.current_frame().ip + 1;
-            self.set_ip(next_ip);
-            // println!("ending at ---- {}", self.current_frame().ip);
         }
 
         Ok(())
@@ -595,11 +618,13 @@ impl VM {
     }
 
     pub fn pop(&mut self) -> Object {
-        self.sp -= 1;
-        self.stack
-            .get(self.sp)
+        let val = self
+            .stack
+            .get(self.sp - 1)
             .expect("Expected something to be on the stack")
-            .clone()
+            .clone();
+        self.sp -= 1;
+        return val;
     }
 
     pub fn last_popped(&self) -> Option<Object> {
@@ -951,6 +976,86 @@ mod tests {
     }
 
     #[test]
+    fn test_function_calls_with_bindings() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "let one = fn() { let one = 1; one }; one();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "let oneAndTwo = fn() { let one = 1; let two = 2; one + two }; oneAndTwo();"
+                    .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(10)),
+                input: r#"
+                let oneAndTwo = fn() { let one = 1; let two = 2; one + two };
+                let threeAndFour = fn() { let three = 3; let four = 4; three + four };
+                oneAndTwo() + threeAndFour();
+                "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(150)),
+                input: r#"
+              let foo = fn() { let foo = 50; foo };
+              let alsoFoo = fn() { let foo = 100; foo };
+              foo() + alsoFoo();
+              "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(97)),
+                input: r#"
+            let global = 50;
+            let minusOne = fn() { let foo = 1; global - foo };
+            let minusTwo = fn() { let foo = 2; global - foo };
+            minusOne() + minusTwo();
+            "#
+                .to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_first_class_function_calls() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: r#"
+                let retOneRetter = fn() { let retOne = fn() {1;}; retOne };
+                retOneRetter()();
+                "#
+                .to_string(),
+            },
+            // VMTestCase {
+            //     expected_top: Some(Object::Int(150)),
+            //     input: r#"
+            //   let foo = fn() { let foo = 50; foo };
+            //   let alsoFoo = fn() { let foo = 100; foo };
+            //   foo() + alsoFoo();
+            //   "#
+            //     .to_string(),
+            // },
+            // VMTestCase {
+            //     expected_top: Some(Object::Int(97)),
+            //     input: r#"
+            // let global = 50;
+            // let minusOne = fn() { let foo = 1; global - foo };
+            // let minusTwo = fn() { let foo = 2; global - foo };
+            // minusOne() + minusTwo();
+            // "#
+            //     .to_string(),
+            // },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
     fn test_bool_expression() {
         let tests: Vec<VMTestCase> = vec![
             VMTestCase {
@@ -1070,6 +1175,7 @@ mod tests {
 
     fn run_vm_test(tests: Vec<VMTestCase>) {
         for test in tests {
+            println!("--- testing: {}", test.input);
             let prog = parse(test.input);
             let st = Rc::new(RefCell::new(SymbolTable::new()));
             let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));

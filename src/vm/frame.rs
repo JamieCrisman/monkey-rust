@@ -9,16 +9,18 @@ use super::VMError;
 pub struct Frame {
     // pub func: Object, // CompiledFunction
     pub instr: Instructions,
+    pub num_locals: i32,
     pub ip: i64,
+    pub base_pointer: i64,
 }
 
 impl Frame {
-    pub fn new(func: Object) -> Result<Self, VMError> {
-        match func {
-            Object::CompiledFunction(instr) => Ok(Self { instr, ip: -1 }),
-            _ => Err(VMError::Reason(
-                "Invalid object type for frame, expected compiled function".to_string(),
-            )),
+    pub fn new(instr: Instructions, num_locals: i32, base_pointer: i64) -> Self {
+        Self {
+            instr,
+            num_locals,
+            ip: -1,
+            base_pointer,
         }
     }
 

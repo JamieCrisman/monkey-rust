@@ -21,7 +21,10 @@ pub enum Object {
     Null,
     ReturnValue(Box<Object>),
     Error(String),
-    CompiledFunction(Instructions),
+    CompiledFunction {
+        instructions: Instructions,
+        num_locals: i32,
+    },
 }
 
 impl Object {
@@ -37,7 +40,10 @@ impl Object {
             Object::Null => ObjectType::Null,
             Object::ReturnValue(_) => ObjectType::ReturnValue,
             Object::Error(_) => ObjectType::Error,
-            Object::CompiledFunction(_) => ObjectType::CompiledFunction,
+            Object::CompiledFunction {
+                instructions: _,
+                num_locals: _,
+            } => ObjectType::CompiledFunction,
         }
     }
 }
@@ -100,7 +106,10 @@ impl fmt::Display for Object {
             Object::Null => write!(f, "null"),
             Object::ReturnValue(ref value) => write!(f, "{}", value),
             Object::Error(ref value) => write!(f, "{}", value),
-            Object::CompiledFunction(ref value) => write!(f, "{}", value),
+            Object::CompiledFunction {
+                instructions: _,
+                num_locals,
+            } => write!(f, "Compiled Function with {} locals", num_locals),
         }
     }
 }

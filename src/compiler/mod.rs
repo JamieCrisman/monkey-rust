@@ -154,8 +154,13 @@ impl Compiler {
         if !self.last_instruction_is(Opcode::ReturnValue) {
             self.emit(Opcode::Return, None);
         }
+        let num_locals = self.symbol_table.borrow().num_definitions;
         let instr = self.leave_scope();
-        let compiled_fn = Object::CompiledFunction(instr);
+
+        let compiled_fn = Object::CompiledFunction {
+            instructions: instr,
+            num_locals: num_locals as i32,
+        };
         let constant_val = Some(vec![self.add_constant(compiled_fn) as i32]);
         self.emit(Opcode::Constant, constant_val);
         Ok(())
@@ -454,6 +459,8 @@ pub struct Bytecode {
 
 #[cfg(test)]
 mod tests {
+    use core::num;
+
     // use crate::evaluator::builtins::new_builtins;
     use crate::compiler::*;
     use crate::lexer;
@@ -529,12 +536,15 @@ mod tests {
                 expected_constants: vec![
                     Object::Int(5),
                     Object::Int(10),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::Constant, Some(vec![1])).unwrap(),
-                        make(Opcode::Add, None).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::Constant, Some(vec![1])).unwrap(),
+                            make(Opcode::Add, None).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 0,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![2])).unwrap(),
@@ -546,12 +556,15 @@ mod tests {
                 expected_constants: vec![
                     Object::Int(5),
                     Object::Int(10),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::Constant, Some(vec![1])).unwrap(),
-                        make(Opcode::Add, None).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::Constant, Some(vec![1])).unwrap(),
+                            make(Opcode::Add, None).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 0,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![2])).unwrap(),
@@ -563,12 +576,15 @@ mod tests {
                 expected_constants: vec![
                     Object::Int(1),
                     Object::Int(2),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::Pop, None).unwrap(),
-                        make(Opcode::Constant, Some(vec![1])).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::Pop, None).unwrap(),
+                            make(Opcode::Constant, Some(vec![1])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 0,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![2])).unwrap(),
@@ -577,9 +593,10 @@ mod tests {
             },
             CompilerTestCase {
                 input: "fn() { }".to_string(),
-                expected_constants: vec![Object::CompiledFunction(concat_instructions(vec![
-                    make(Opcode::Return, None).unwrap(),
-                ]))],
+                expected_constants: vec![Object::CompiledFunction {
+                    instructions: concat_instructions(vec![make(Opcode::Return, None).unwrap()]),
+                    num_locals: 0,
+                }],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![0])).unwrap(),
                     make(Opcode::Pop, None).unwrap(),
@@ -597,10 +614,13 @@ mod tests {
                 input: "fn() { 24 }()".to_string(),
                 expected_constants: vec![
                     Object::Int(24),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 0,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
@@ -612,10 +632,13 @@ mod tests {
                 input: "let noArg = fn() { 24 };noArg();".to_string(),
                 expected_constants: vec![
                     Object::Int(24),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 0,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
@@ -825,10 +848,13 @@ mod tests {
                 input: "let one = 100; fn() { one; };".to_string(),
                 expected_constants: vec![
                     Object::Int(100),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::GetGlobal, Some(vec![0])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 0,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![0])).unwrap(),
@@ -841,12 +867,15 @@ mod tests {
                 input: "fn() { let one = 100; one; };".to_string(),
                 expected_constants: vec![
                     Object::Int(100),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::SetLocal, Some(vec![0])).unwrap(),
-                        make(Opcode::GetLocal, Some(vec![0])).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::SetLocal, Some(vec![0])).unwrap(),
+                            make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 1,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![1])).unwrap(),
@@ -858,16 +887,19 @@ mod tests {
                 expected_constants: vec![
                     Object::Int(100),
                     Object::Int(200),
-                    Object::CompiledFunction(concat_instructions(vec![
-                        make(Opcode::Constant, Some(vec![0])).unwrap(),
-                        make(Opcode::SetLocal, Some(vec![0])).unwrap(),
-                        make(Opcode::Constant, Some(vec![1])).unwrap(),
-                        make(Opcode::SetLocal, Some(vec![1])).unwrap(),
-                        make(Opcode::GetLocal, Some(vec![0])).unwrap(),
-                        make(Opcode::GetLocal, Some(vec![1])).unwrap(),
-                        make(Opcode::Add, None).unwrap(),
-                        make(Opcode::ReturnValue, None).unwrap(),
-                    ])),
+                    Object::CompiledFunction {
+                        instructions: concat_instructions(vec![
+                            make(Opcode::Constant, Some(vec![0])).unwrap(),
+                            make(Opcode::SetLocal, Some(vec![0])).unwrap(),
+                            make(Opcode::Constant, Some(vec![1])).unwrap(),
+                            make(Opcode::SetLocal, Some(vec![1])).unwrap(),
+                            make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+                            make(Opcode::GetLocal, Some(vec![1])).unwrap(),
+                            make(Opcode::Add, None).unwrap(),
+                            make(Opcode::ReturnValue, None).unwrap(),
+                        ]),
+                        num_locals: 2,
+                    },
                 ],
                 expected_instructions: vec![
                     make(Opcode::Constant, Some(vec![2])).unwrap(),
@@ -1228,9 +1260,16 @@ mod tests {
                     Object::String(s2) => assert_eq!(s, s2),
                     _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
                 },
-                Object::CompiledFunction(Instructions { data }) => match got.get(i).unwrap() {
-                    Object::CompiledFunction(Instructions { data: data2 }) => {
-                        assert_eq!(data, data2)
+                Object::CompiledFunction {
+                    instructions: Instructions { data },
+                    num_locals,
+                } => match got.get(i).unwrap() {
+                    Object::CompiledFunction {
+                        instructions: Instructions { data: data2 },
+                        num_locals: locals2,
+                    } => {
+                        assert_eq!(data, data2);
+                        assert_eq!(num_locals, locals2);
                     }
                     _ => return Err(CompileError::Reason("wrong comparison types".to_string())),
                 },

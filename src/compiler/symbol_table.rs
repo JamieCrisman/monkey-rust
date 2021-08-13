@@ -18,7 +18,7 @@ pub struct Symbol {
 #[derive(Clone, Debug)]
 pub struct SymbolTable {
     store: HashMap<String, Symbol>,
-    num_definitions: usize,
+    pub num_definitions: usize,
     pub outer: Option<Rc<RefCell<SymbolTable>>>,
 }
 
