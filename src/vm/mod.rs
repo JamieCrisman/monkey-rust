@@ -36,6 +36,7 @@ pub struct VM {
     constants: Vec<Object>,
     // instructions: Instructions,
     stack: Vec<Object>,
+    last_popped: Option<Object>,
     sp: usize,
     pub globals: Rc<RefCell<Vec<Object>>>,
     // stack_size: i32,
@@ -50,8 +51,10 @@ impl VM {
         Self {
             // instructions: bytecode.instructions.clone(),
             constants: bytecode.constants.clone(),
+            last_popped: None,
             sp: 0,
-            stack: vec![Object::Null; DEFAULT_STACK_SIZE],
+            // stack: vec![Object::Null; DEFAULT_STACK_SIZE],
+            stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
             globals: g,
             frames,
             frames_index: 1,
@@ -250,6 +253,9 @@ impl VM {
                     let new_frame = Frame::new(instructions, num_locals, self.sp as i64);
                     let bp = new_frame.base_pointer;
                     self.push_frame(new_frame);
+                    for _i in 0..num_locals {
+                        self.push(Object::Null)?;
+                    }
                     self.sp = (bp + (num_locals as i64)) as usize;
                     // cur_instructions = self
                     //     .current_frame()
@@ -618,20 +624,15 @@ impl VM {
     }
 
     pub fn pop(&mut self) -> Object {
-        let val = self
-            .stack
-            .get(self.sp - 1)
-            .expect("Expected something to be on the stack")
-            .clone();
+        // let val = self.stack.pop().unwrap();
+        let val = self.stack.remove(self.sp - 1);
+        self.last_popped = Some(val.clone());
         self.sp -= 1;
         return val;
     }
 
     pub fn last_popped(&self) -> Option<Object> {
-        match self.stack.get(self.sp) {
-            Some(obj) => Some(obj.clone()),
-            None => None,
-        }
+        self.last_popped.clone()
     }
 }
 
