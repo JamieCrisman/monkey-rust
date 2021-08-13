@@ -3,6 +3,8 @@ pub mod symbol_table;
 use crate::code::*;
 use crate::parser::ast::{BlockStatement, Expression, Ident, Infix, Literal, Prefix, Statement};
 use crate::Object;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use self::symbol_table::SymbolTable;
 
@@ -18,14 +20,14 @@ pub struct CompilationScope {
     previous_instruction: Option<EmittedInstruction>,
 }
 
-pub struct Compiler<'a> {
+pub struct Compiler {
     // instructions: Instructions,
-    constants: &'a mut Vec<Object>,
+    pub constants: Rc<RefCell<Vec<Object>>>,
     // last_instruction: Option<EmittedInstruction>,
     // previous_instruction: Option<EmittedInstruction>,
     scope_index: usize,
     scopes: Vec<CompilationScope>,
-    pub symbol_table: &'a mut SymbolTable,
+    pub symbol_table: Rc<RefCell<SymbolTable>>,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -33,12 +35,15 @@ pub enum CompileError {
     Reason(String),
 }
 
-impl<'a> Compiler<'a> {
+impl Compiler {
     // pub fn new() -> Self {
     //     return ;
     // }
 
-    pub fn new_with_state(st: &'a mut SymbolTable, constants: &'a mut Vec<Object>) -> Self {
+    pub fn new_with_state(
+        st: Rc<RefCell<SymbolTable>>,
+        constants: Rc<RefCell<Vec<Object>>>,
+    ) -> Self {
         Compiler {
             // instructions: Instructions { data: vec![] },
             constants: constants,
@@ -95,15 +100,20 @@ impl<'a> Compiler<'a> {
         match exp {
             Expression::Blank => Ok(()),
             Expression::Ident(ident) => {
-                let symbol = self.symbol_table.resolve(ident.0.as_str());
-                if symbol.is_none() {
-                    return Err(CompileError::Reason(format!(
-                        "undefined variable: {}",
-                        ident.0
-                    )));
-                }
-                let val = Some(vec![symbol.unwrap().index as i32]);
-                self.emit(Opcode::GetGlobal, val);
+                let symbol = match self.symbol_table.borrow().resolve(ident.0.clone()) {
+                    None => {
+                        return Err(CompileError::Reason(format!(
+                            "undefined variable: {}",
+                            ident.0
+                        )))
+                    }
+                    Some(val) => val,
+                };
+                let val = Some(vec![symbol.index as i32]);
+                match symbol.scope {
+                    symbol_table::SymbolScope::Global => self.emit(Opcode::GetGlobal, val),
+                    symbol_table::SymbolScope::Local => self.emit(Opcode::GetLocal, val),
+                };
                 Ok(())
             }
             Expression::Infix(i, exp_a, exp_b) => self.compile_infix(i, exp_a, exp_b),
@@ -167,8 +177,15 @@ impl<'a> Compiler<'a> {
 
     fn compile_let(&mut self, l: Ident, e: Expression) -> Result<(), CompileError> {
         self.compile_expression(e)?;
-        let symbol = self.symbol_table.define(l.0.as_str());
-        self.emit(Opcode::SetGlobal, Some(vec![symbol.index as i32]));
+        let symbol = self.symbol_table.borrow_mut().define(l.0.as_str());
+        match symbol.scope {
+            symbol_table::SymbolScope::Global => {
+                self.emit(Opcode::SetGlobal, Some(vec![symbol.index as i32]))
+            }
+            symbol_table::SymbolScope::Local => {
+                self.emit(Opcode::SetLocal, Some(vec![symbol.index as i32]))
+            }
+        };
         Ok(())
     }
 
@@ -352,8 +369,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_constant(&mut self, obj: Object) -> usize {
-        self.constants.push(obj);
-        return self.constants.len() - 1;
+        self.constants.borrow_mut().push(obj);
+        return self.constants.borrow().len() - 1;
     }
 
     fn emit(&mut self, op: Opcode, operands: Option<Vec<i32>>) -> usize {
@@ -391,7 +408,7 @@ impl<'a> Compiler<'a> {
     pub fn bytecode(&self) -> Bytecode {
         return Bytecode {
             instructions: self.scopes[self.scope_index].instructions.clone(),
-            constants: self.constants.clone(),
+            constants: self.constants.borrow().clone(),
         };
     }
 
@@ -403,6 +420,10 @@ impl<'a> Compiler<'a> {
         };
         self.scopes.push(scope);
         self.scope_index += 1;
+        let new_table = Rc::new(RefCell::new(SymbolTable::new_with_outer(
+            self.symbol_table.to_owned(),
+        )));
+        self.symbol_table = new_table;
     }
 
     fn leave_scope(&mut self) -> Instructions {
@@ -410,6 +431,17 @@ impl<'a> Compiler<'a> {
 
         self.scopes.pop();
         self.scope_index -= 1;
+
+        // let _inner = self.symbol_table.;
+        let outer = self
+            .symbol_table
+            .borrow()
+            .outer
+            .as_ref()
+            .unwrap()
+            .to_owned();
+        self.symbol_table = outer;
+        // TODO: drop?
         return results.unwrap();
     }
 }
@@ -434,9 +466,9 @@ mod tests {
     }
 
     fn test_compiler_scopes() {
-        let mut st = SymbolTable::new();
-        let mut constants: Vec<Object> = vec![];
-        let mut c = Compiler::new_with_state(&mut st, &mut constants);
+        let st = Rc::new(RefCell::new(SymbolTable::new()));
+        let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
+        let mut c = Compiler::new_with_state(st, constants);
         c.emit(Opcode::Multiply, None);
         c.enter_scope();
         assert_eq!(1, c.scope_index);
@@ -445,6 +477,9 @@ mod tests {
             1,
             c.scopes.get(c.scope_index).unwrap().instructions.data.len()
         );
+
+        assert!(c.symbol_table.as_ref().borrow().outer.is_some());
+        // assert_ne!(c.symbol_table, None);
 
         let last = c
             .scopes
@@ -456,6 +491,7 @@ mod tests {
         assert_eq!(Opcode::Subtract, last.op);
         c.leave_scope();
         assert_eq!(0, c.scope_index);
+        assert!(c.symbol_table.as_ref().borrow().outer.is_none());
         c.emit(Opcode::Add, None);
         assert_eq!(
             2,
@@ -801,38 +837,43 @@ mod tests {
                     make(Opcode::Pop, None).unwrap(),
                 ],
             },
-            // CompilerTestCase {
-            //     input: "fn() { let one = 100; one; };".to_string(),
-            //     expected_constants: vec![
-            //         Object::Int(100),
-            //         Object::CompiledFunction(concat_instructions(vec![
-            //             make(Opcode::Constant, Some(vec![0])).unwrap(),
-            //             make(Opcode::SetLocal, Some(vec![0])).unwrap(),
-            //             make(Opcode::GetLocal, Some(vec![0])).unwrap(),
-            //             make(Opcode::ReturnValue, None).unwrap(),
-            //         ])),
-            //     ],
-            //     expected_instructions: vec![
-            //         make(Opcode::Constant, Some(vec![1])).unwrap(),
-            //         make(Opcode::Pop, None).unwrap(),
-            //     ],
-            // },
-            // CompilerTestCase {
-            //     input: "fn() { let one = 100; let two = 200; one+two };".to_string(),
-            //     expected_constants: vec![
-            //         Object::Int(100),
-            //         Object::CompiledFunction(concat_instructions(vec![
-            //             make(Opcode::Constant, Some(vec![0])).unwrap(),
-            //             make(Opcode::SetLocal, Some(vec![0])).unwrap(),
-            //             make(Opcode::GetLocal, Some(vec![0])).unwrap(),
-            //             make(Opcode::ReturnValue, None).unwrap(),
-            //         ])),
-            //     ],
-            //     expected_instructions: vec![
-            //         make(Opcode::Constant, Some(vec![1])).unwrap(),
-            //         make(Opcode::Pop, None).unwrap(),
-            //     ],
-            // },
+            CompilerTestCase {
+                input: "fn() { let one = 100; one; };".to_string(),
+                expected_constants: vec![
+                    Object::Int(100),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::SetLocal, Some(vec![0])).unwrap(),
+                        make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "fn() { let one = 100; let two = 200; one+two };".to_string(),
+                expected_constants: vec![
+                    Object::Int(100),
+                    Object::Int(200),
+                    Object::CompiledFunction(concat_instructions(vec![
+                        make(Opcode::Constant, Some(vec![0])).unwrap(),
+                        make(Opcode::SetLocal, Some(vec![0])).unwrap(),
+                        make(Opcode::Constant, Some(vec![1])).unwrap(),
+                        make(Opcode::SetLocal, Some(vec![1])).unwrap(),
+                        make(Opcode::GetLocal, Some(vec![0])).unwrap(),
+                        make(Opcode::GetLocal, Some(vec![1])).unwrap(),
+                        make(Opcode::Add, None).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ])),
+                ],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
             // CompilerTestCase {
             //     input: "let one = 1; one;".to_string(),
             //     expected_constants: vec![Object::Int(1)],
@@ -1115,9 +1156,9 @@ mod tests {
     fn run_compiler_test(tests: Vec<CompilerTestCase>) {
         for test in tests {
             let program = parse(test.input.clone());
-            let mut st = SymbolTable::new();
-            let mut constants: Vec<Object> = vec![];
-            let mut c = Compiler::new_with_state(&mut st, &mut constants);
+            let mut st = Rc::new(RefCell::new(SymbolTable::new()));
+            let mut constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
+            let mut c = Compiler::new_with_state(st, constants);
             // println!("{:?}", program);
             let compile_result = c.compile(program);
             assert!(

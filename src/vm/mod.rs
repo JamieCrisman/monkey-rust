@@ -1,4 +1,6 @@
 mod frame;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::{borrow::Borrow, collections::HashMap, ops::Deref};
 
 use crate::{
@@ -29,19 +31,19 @@ fn is_truthy(obj: Object) -> bool {
     }
 }
 
-pub struct VM<'a> {
+pub struct VM {
     constants: Vec<Object>,
     // instructions: Instructions,
     stack: Vec<Object>,
     sp: usize,
-    pub globals: &'a mut Vec<Object>,
+    pub globals: Rc<RefCell<Vec<Object>>>,
     // stack_size: i32,
     frames: Vec<Frame>,
     frames_index: i32,
 }
 
-impl<'a> VM<'a> {
-    pub fn new_with_global_store(bytecode: Bytecode, g: &'a mut Vec<Object>) -> Self {
+impl VM {
+    pub fn new_with_global_store(bytecode: Bytecode, g: Rc<RefCell<Vec<Object>>>) -> Self {
         let mut frames = vec![
             Frame::new(Object::CompiledFunction(bytecode.instructions.clone()))
                 .expect("expected a valid main"),
@@ -194,7 +196,13 @@ impl<'a> VM<'a> {
                     ];
                     let global_index = u16::from_be_bytes(buff);
                     self.set_ip((ip + 2) as i64);
-                    let val = (*self.globals.get(global_index as usize).unwrap()).clone();
+                    let val: Object = self
+                        .globals
+                        .as_ref()
+                        .borrow()
+                        .get(global_index as usize)
+                        .unwrap()
+                        .clone();
                     self.push(val)?;
                 }
                 Opcode::SetGlobal => {
@@ -205,7 +213,7 @@ impl<'a> VM<'a> {
                     let global_index = u16::from_be_bytes(buff);
                     self.set_ip((ip + 2) as i64);
                     let pop = self.pop();
-                    self.globals.insert(global_index as usize, pop);
+                    self.globals.borrow_mut().insert(global_index as usize, pop);
                 }
                 Opcode::Array => {
                     let buff = [
@@ -612,7 +620,9 @@ mod tests {
     use crate::lexer;
     use crate::parser;
     use crate::vm::VM;
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     struct VMTestCase {
         input: String,
@@ -1061,14 +1071,14 @@ mod tests {
     fn run_vm_test(tests: Vec<VMTestCase>) {
         for test in tests {
             let prog = parse(test.input);
-            let mut st = SymbolTable::new();
-            let mut consts: Vec<Object> = vec![];
-            let mut c = Compiler::new_with_state(&mut st, &mut consts);
+            let st = Rc::new(RefCell::new(SymbolTable::new()));
+            let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
+            let mut c = Compiler::new_with_state(st, constants);
             let compile_result = c.compile(prog);
             assert!(compile_result.is_ok());
 
-            let mut globals: Vec<Object> = vec![];
-            let mut vmm = VM::new_with_global_store(c.bytecode(), &mut globals);
+            let globals: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
+            let mut vmm = VM::new_with_global_store(c.bytecode(), globals);
             let result = vmm.run();
             assert!(!result.is_err());
             let stack_elem = vmm.last_popped();

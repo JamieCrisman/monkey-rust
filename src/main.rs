@@ -11,8 +11,8 @@ mod vm;
 use evaluator::builtins::new_builtins;
 use evaluator::env;
 use evaluator::object::Object;
-// use std::cell::RefCell;
-// use std::rc::Rc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use io::Write;
 
@@ -34,9 +34,10 @@ fn main() {
 
     // let mut the_evaluator = evaluator::Evaluator::new(Rc::new(RefCell::new(env)));
 
-    let mut constants: Vec<Object> = vec![];
-    let mut globals: Vec<Object> = Vec::with_capacity(vm::GLOBALS_SIZE);
-    let mut st: symbol_table::SymbolTable = SymbolTable::new();
+    let mut constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
+    let mut globals: Rc<RefCell<Vec<Object>>> =
+        Rc::new(RefCell::new(Vec::with_capacity(vm::GLOBALS_SIZE)));
+    let mut st: Rc<RefCell<symbol_table::SymbolTable>> = Rc::new(RefCell::new(SymbolTable::new()));
 
     loop {
         print!(">> ");
@@ -54,17 +55,20 @@ fn main() {
             }
         }
         // println!("{:?}", st);
-        let mut comp = compiler::Compiler::new_with_state(&mut st, &mut constants);
+        let mut comp = compiler::Compiler::new_with_state(st, constants);
         if let Err(e) = comp.compile(program) {
             println!("Compilation error: {:?}", e);
         }
 
         let code = comp.bytecode();
+        st = comp.symbol_table;
+        constants = comp.constants;
+
         // constants = code.constants.clone();
         // st = comp.symbol_table.clone();
         // println!("{:?}", comp.symbol_table);
 
-        let mut machine = VM::new_with_global_store(code, &mut globals);
+        let mut machine = VM::new_with_global_store(code, globals);
         if let Err(e) = machine.run() {
             println!("Error Executing Code: {:?}", e);
         }
@@ -74,6 +78,7 @@ fn main() {
         } else {
             println!(" :C ");
         }
+        globals = machine.globals;
         // if let Some(result) = the_evaluator.eval(program) {
         //     println!("{}\n", result);
         // }
