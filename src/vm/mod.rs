@@ -1,9 +1,10 @@
 mod frame;
-use core::num;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::{borrow::Borrow, collections::HashMap, ops::Deref};
 
+use crate::builtins::{self, BuiltInFunction};
+use crate::evaluator::object::BuiltInFunc;
 use crate::{
     code::{Instructions, Opcode},
     compiler::Bytecode,
@@ -42,6 +43,7 @@ pub struct VM {
     // stack_size: i32,
     frames: Vec<Frame>,
     frames_index: i32,
+    builtins: Vec<BuiltInFunction>,
 }
 
 impl VM {
@@ -58,6 +60,7 @@ impl VM {
             globals: g,
             frames,
             frames_index: 1,
+            builtins: builtins::new_builtins(),
         }
     }
 
@@ -224,6 +227,7 @@ impl VM {
                     let element_count = u16::from_be_bytes(buff);
                     self.set_ip((ip + 2) as i64);
                     let array = self.build_array(self.sp - element_count as usize, self.sp);
+                    self.sp = self.sp - element_count as usize;
                     self.push(array)?;
                 }
                 Opcode::Hash => {
@@ -294,6 +298,17 @@ impl VM {
                     // );
                     self.stack[(base_pointer + local_index) as usize] = self.pop();
                 }
+                Opcode::BuiltinFunc => {
+                    let built_index = cur_instructions
+                        .data
+                        .get(ip + 1)
+                        .expect("expected byte")
+                        .clone() as i64;
+                    self.set_ip((ip + 1) as i64);
+
+                    let def = self.builtins.get(built_index as usize).unwrap();
+                    self.push(def.func.clone())?;
+                }
             }
         }
 
@@ -301,21 +316,59 @@ impl VM {
     }
 
     fn execute_call_function(&mut self, args: i64) -> Result<(), VMError> {
-        let (instructions, num_locals, num_parameters) =
-            match self.stack[self.sp - 1 - (args as usize)].clone() {
-                Object::CompiledFunction {
-                    instructions,
-                    num_locals,
-                    num_parameters,
-                } => (instructions, num_locals, num_parameters),
-                _ => return Err(VMError::Reason("expected function".to_string())),
-            };
-        if num_parameters != args as i32 {
-            return Err(VMError::Reason(format!(
-                "wrong number of arguments: want {} but got {}",
-                num_parameters, args,
-            )));
-        }
+        match self.stack[self.sp - 1 - (args as usize)].clone() {
+            Object::CompiledFunction {
+                instructions,
+                num_locals,
+                num_parameters,
+            } => {
+                if num_parameters != args as i32 {
+                    return Err(VMError::Reason(format!(
+                        "wrong number of arguments: want {} but got {}",
+                        num_parameters, args,
+                    )));
+                }
+                self.execute_compiled_function(args, instructions, num_locals)?;
+            }
+            Object::Builtin(num_parameters, builtin_func) => {
+                if num_parameters != -1 && num_parameters != args as i32 {
+                    return Err(VMError::Reason(format!(
+                        "wrong number of arguments: want {} but got {}",
+                        num_parameters, args,
+                    )));
+                }
+                self.execute_builtin(builtin_func, args)?;
+            }
+            something => {
+                return Err(VMError::Reason(format!(
+                    "expected function, but got {:?}({})",
+                    something.object_type(),
+                    something
+                )));
+            }
+        };
+
+        Ok(())
+    }
+
+    fn execute_builtin(&mut self, func: BuiltInFunc, num_args: i64) -> Result<(), VMError> {
+        let args = self
+            .stack
+            .get(self.sp - (num_args as usize)..self.sp)
+            .unwrap()
+            .to_vec();
+        let result = func(args);
+        self.sp = self.sp - num_args as usize - 1;
+        self.push(result)?;
+        Ok(())
+    }
+
+    fn execute_compiled_function(
+        &mut self,
+        args: i64,
+        instructions: Instructions,
+        num_locals: i32,
+    ) -> Result<(), VMError> {
         let new_frame = Frame::new(instructions, num_locals, self.sp as i64 - args);
         let bp = new_frame.base_pointer;
         self.push_frame(new_frame);
@@ -323,7 +376,6 @@ impl VM {
             self.push(Object::Null)?;
         }
         self.sp = (bp + (num_locals as i64)) as usize;
-
         Ok(())
     }
 
@@ -915,6 +967,96 @@ mod tests {
     }
 
     #[test]
+    fn test_builtin_functions() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(0)),
+                input: "len(\"\")".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(4)),
+                input: "len(\"four\")".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(11)),
+                input: "len(\"hello world\")".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Error(
+                    "argument to `len` not supported, got 1".to_string(),
+                )),
+                input: "len(1)".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Error(
+                    "wrong number of arguments: want 1 but got 2".to_string(),
+                )),
+                input: "len(\"a\", \"b\")".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "len([1,2,3])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(0)),
+                input: "len([])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "puts(\"hello\")".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(1)),
+                input: "first([1,2,3])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "first([])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Error(
+                    "argument to `first` must be array, got 1".to_string(),
+                )),
+                input: "first(1)".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(3)),
+                input: "last([1,2,3])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "last([])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Error(
+                    "argument to `last` must be array, got 1".to_string(),
+                )),
+                input: "last(1)".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Array(vec![Object::Int(2), Object::Int(3)])),
+                input: "rest([1,2,3])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Null),
+                input: "rest([])".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Array(vec![Object::Int(1)])),
+                input: "push([],1)".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Error(
+                    "argument to `push` must be array, got 1".to_string(),
+                )),
+                input: "push(1,1)".to_string(),
+            },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
     fn test_array_literals() {
         let tests: Vec<VMTestCase> = vec![
             VMTestCase {
@@ -1291,9 +1433,9 @@ mod tests {
 
     fn run_vm_test(tests: Vec<VMTestCase>) {
         for test in tests {
-            // println!("--- testing: {}", test.input);
+            println!("--- testing: {}", test.input);
             let prog = parse(test.input);
-            let st = Rc::new(RefCell::new(SymbolTable::new()));
+            let st = Rc::new(RefCell::new(SymbolTable::new_with_builtins()));
             let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
             let mut c = Compiler::new_with_state(st, constants);
             let compile_result = c.compile(prog);
@@ -1304,15 +1446,19 @@ mod tests {
             let result = vmm.run();
             match test.expected_top.clone() {
                 Some(Object::Error(e)) => {
-                    assert!(result.is_err());
-                    match result.err().unwrap() {
-                        VMError::Reason(e2) => {
-                            assert_eq!(e, e2);
+                    if result.is_err() {
+                        match result.err().unwrap() {
+                            VMError::Reason(e2) => {
+                                assert_eq!(e, e2);
+                            }
                         }
+                    } else {
+                        let stack_elem = vmm.last_popped();
+                        assert_eq!(stack_elem, test.expected_top);
                     }
                 }
                 Some(_) => {
-                    assert!(!result.is_err());
+                    assert!(!result.is_err(), "got error: {:?}", result.unwrap_err());
                     let stack_elem = vmm.last_popped();
                     assert_eq!(stack_elem, test.expected_top);
                 }

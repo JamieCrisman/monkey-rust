@@ -1,3 +1,4 @@
+use crate::builtins::new_builtins;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -6,6 +7,7 @@ use std::rc::Rc;
 pub enum SymbolScope {
     Global,
     Local,
+    BuiltIn,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +25,18 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
+    pub fn new_with_builtins() -> Self {
+        let mut result = Self {
+            store: HashMap::new(),
+            num_definitions: 0,
+            outer: None,
+        };
+        for (ind, b) in new_builtins().iter().enumerate() {
+            result.define_builtin(ind, b.name.clone());
+        }
+
+        result
+    }
     pub fn new() -> Self {
         Self {
             store: HashMap::new(),
@@ -37,6 +51,16 @@ impl SymbolTable {
             num_definitions: 0,
             outer: Some(outer),
         }
+    }
+
+    pub fn define_builtin(&mut self, index: usize, name: String) -> Symbol {
+        let result = Symbol {
+            name: String::from(name),
+            index,
+            scope: SymbolScope::BuiltIn,
+        };
+        self.store.insert(result.name.clone(), result.clone());
+        result
     }
 
     pub fn define(&mut self, name: &str) -> Symbol {
@@ -267,5 +291,94 @@ mod tests {
         assert_eq!(local2.resolve(String::from("d")).unwrap(), expected["d"]);
         assert_eq!(local2.resolve(String::from("e")).unwrap(), expected["e"]);
         assert_eq!(local2.resolve(String::from("f")).unwrap(), expected["f"]);
+    }
+
+    #[test]
+    fn test_builtins() {
+        let mut expected: HashMap<String, Symbol> = HashMap::new();
+        expected.insert(
+            "a".to_string(),
+            Symbol {
+                index: 0,
+                name: String::from("a"),
+                scope: SymbolScope::BuiltIn,
+            },
+        );
+        // expected.insert(
+        //     "b".to_string(),
+        //     Symbol {
+        //         index: 1,
+        //         name: String::from("b"),
+        //         scope: SymbolScope::BuiltIn,
+        //     },
+        // );
+        expected.insert(
+            "c".to_string(),
+            Symbol {
+                index: 1,
+                name: String::from("c"),
+                scope: SymbolScope::BuiltIn,
+            },
+        );
+        // expected.insert(
+        //     "d".to_string(),
+        //     Symbol {
+        //         index: 1,
+        //         name: String::from("d"),
+        //         scope: SymbolScope::BuiltIn,
+        //     },
+        // );
+        expected.insert(
+            "e".to_string(),
+            Symbol {
+                index: 2,
+                name: String::from("e"),
+                scope: SymbolScope::BuiltIn,
+            },
+        );
+        expected.insert(
+            "f".to_string(),
+            Symbol {
+                index: 3,
+                name: String::from("f"),
+                scope: SymbolScope::BuiltIn,
+            },
+        );
+
+        let global = Rc::new(RefCell::new(SymbolTable::new()));
+        // global.define("a");
+        // global.define("b");
+        // assert_eq!(a, expected["a"]);
+        // assert_eq!(b, expected["b"]);
+        for (ind, i) in expected.clone().iter().enumerate() {
+            global.borrow_mut().define_builtin(i.1.index, i.0.clone());
+        }
+
+        let local = Rc::new(RefCell::new(SymbolTable::new_with_outer(global.clone())));
+        // local.define("c");
+        // local.define("d");
+
+        let local2 = Rc::new(RefCell::new(SymbolTable::new_with_outer(local.clone())));
+
+        // local2.define("e");
+        // local2.define("f");
+        // let a2 = local.define("a");
+        // assert_eq!(a2, expected["a"]);
+        // let b2 = local.define("b");
+        // assert_eq!(b2, expected["b"]);
+
+        // assert_eq!(c, expected["c"]);
+        // assert_eq!(d, expected["d"]);
+        for i in expected {
+            assert_eq!(global.borrow().resolve(i.0.clone()).unwrap(), i.1.clone());
+            assert_eq!(local.borrow().resolve(i.0.clone()).unwrap(), i.1.clone());
+            assert_eq!(local2.borrow().resolve(i.0.clone()).unwrap(), i.1.clone());
+        }
+        // assert_eq!(local2.resolve(String::from("a")).unwrap(), expected["a"]);
+        // assert_eq!(local2.resolve(String::from("b")).unwrap(), expected["b"]);
+        // assert_eq!(local2.resolve(String::from("c")).unwrap(), expected["c"]);
+        // assert_eq!(local2.resolve(String::from("d")).unwrap(), expected["d"]);
+        // assert_eq!(local2.resolve(String::from("e")).unwrap(), expected["e"]);
+        // assert_eq!(local2.resolve(String::from("f")).unwrap(), expected["f"]);
     }
 }

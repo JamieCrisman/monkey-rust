@@ -113,6 +113,7 @@ impl Compiler {
                 match symbol.scope {
                     symbol_table::SymbolScope::Global => self.emit(Opcode::GetGlobal, val),
                     symbol_table::SymbolScope::Local => self.emit(Opcode::GetLocal, val),
+                    symbol_table::SymbolScope::BuiltIn => self.emit(Opcode::BuiltinFunc, val),
                 };
                 Ok(())
             }
@@ -200,6 +201,7 @@ impl Compiler {
             symbol_table::SymbolScope::Local => {
                 self.emit(Opcode::SetLocal, Some(vec![symbol.index as i32]))
             }
+            _ => return Err(CompileError::Reason("Cannot set a builtin".to_string())),
         };
         Ok(())
     }
@@ -469,7 +471,6 @@ pub struct Bytecode {
 
 #[cfg(test)]
 mod tests {
-    use core::num;
 
     // use crate::evaluator::builtins::new_builtins;
     use crate::compiler::*;
@@ -536,6 +537,59 @@ mod tests {
         let l = lexer::Lexer::new(input);
         let mut p = parser::Parser::new(l);
         p.parse_program()
+    }
+
+    #[test]
+    fn test_builtin_functions() {
+        let tests: Vec<CompilerTestCase> = vec![
+            CompilerTestCase {
+                input: "len([]);push([],1);".to_string(),
+                expected_constants: vec![Object::Int(1)],
+                expected_instructions: vec![
+                    make(Opcode::BuiltinFunc, Some(vec![0])).unwrap(),
+                    make(Opcode::Array, Some(vec![0])).unwrap(),
+                    make(Opcode::Call, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                    make(Opcode::BuiltinFunc, Some(vec![4])).unwrap(),
+                    make(Opcode::Array, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Call, Some(vec![2])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "fn() {len([]);}".to_string(),
+                expected_constants: vec![Object::CompiledFunction {
+                    instructions: concat_instructions(vec![
+                        make(Opcode::BuiltinFunc, Some(vec![0])).unwrap(),
+                        make(Opcode::Array, Some(vec![0])).unwrap(),
+                        make(Opcode::Call, Some(vec![1])).unwrap(),
+                        make(Opcode::ReturnValue, None).unwrap(),
+                    ]),
+                    num_locals: 0,
+                    num_parameters: 0,
+                }],
+                expected_instructions: vec![
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+            CompilerTestCase {
+                input: "len([1,2,3])".to_string(),
+                expected_constants: vec![Object::Int(1), Object::Int(2), Object::Int(3)],
+                expected_instructions: vec![
+                    make(Opcode::BuiltinFunc, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![0])).unwrap(),
+                    make(Opcode::Constant, Some(vec![1])).unwrap(),
+                    make(Opcode::Constant, Some(vec![2])).unwrap(),
+                    make(Opcode::Array, Some(vec![3])).unwrap(),
+                    make(Opcode::Call, Some(vec![1])).unwrap(),
+                    make(Opcode::Pop, None).unwrap(),
+                ],
+            },
+        ];
+
+        run_compiler_test(tests);
     }
 
     #[test]
@@ -1306,7 +1360,7 @@ mod tests {
         for test in tests {
             println!("testing {}", test.input);
             let program = parse(test.input.clone());
-            let st = Rc::new(RefCell::new(SymbolTable::new()));
+            let st = Rc::new(RefCell::new(SymbolTable::new_with_builtins()));
             let constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
             let mut c = Compiler::new_with_state(st, constants);
             // println!("{:?}", program);
@@ -1335,7 +1389,8 @@ mod tests {
         got: Instructions,
     ) -> Result<(), CompileError> {
         let concatted = concat_instructions(expected);
-        println!("len {}: {:?}", got.data.len(), got);
+        println!("len {}: {:?}", got.data.len(), got.data);
+        println!("len {}: {:?}", concatted.data.len(), concatted.data);
         if got.data.len() != concatted.data.len() {
             assert_eq!(concatted.data.len(), got.data.len());
         }

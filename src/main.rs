@@ -2,14 +2,15 @@
 mod lexer;
 mod parser;
 use std::io::{self, BufRead};
+mod builtins;
 mod code;
 mod compiler;
 mod evaluator;
 mod token;
 mod vm;
 // use token::Token;
-use evaluator::builtins::new_builtins;
-use evaluator::env;
+// use evaluator::builtins::new_builtins;
+// use evaluator::env;
 use evaluator::object::Object;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -20,24 +21,15 @@ use compiler::symbol_table::{self, SymbolTable};
 use vm::VM;
 
 fn main() {
-    let mut env = env::Env::from(new_builtins());
-
-    env.set(
-        String::from("puts"),
-        &Object::Builtin(-1, |args| {
-            for arg in args {
-                println!("{}", arg);
-            }
-            Object::Null
-        }),
-    );
+    // let mut env = env::Env::from(new_builtins());
 
     // let mut the_evaluator = evaluator::Evaluator::new(Rc::new(RefCell::new(env)));
 
     let mut constants: Rc<RefCell<Vec<Object>>> = Rc::new(RefCell::new(vec![]));
     let mut globals: Rc<RefCell<Vec<Object>>> =
         Rc::new(RefCell::new(Vec::with_capacity(vm::GLOBALS_SIZE)));
-    let mut st: Rc<RefCell<symbol_table::SymbolTable>> = Rc::new(RefCell::new(SymbolTable::new()));
+    let mut st: Rc<RefCell<symbol_table::SymbolTable>> =
+        Rc::new(RefCell::new(SymbolTable::new_with_builtins()));
 
     loop {
         print!(">> ");

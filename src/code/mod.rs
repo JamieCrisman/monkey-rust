@@ -123,6 +123,7 @@ pub enum Opcode {
     Return = 23,
     GetLocal = 24,
     SetLocal = 25,
+    BuiltinFunc = 26,
 }
 
 impl From<u8> for Opcode {
@@ -154,6 +155,7 @@ impl From<u8> for Opcode {
             23 => return Opcode::Return,
             24 => return Opcode::GetLocal,
             25 => return Opcode::SetLocal,
+            26 => return Opcode::BuiltinFunc,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -184,7 +186,9 @@ impl Opcode {
             | Opcode::SetGlobal
             | Opcode::Array
             | Opcode::Hash => Some(vec![2]),
-            Opcode::SetLocal | Opcode::GetLocal | Opcode::Call => Some(vec![1]),
+            Opcode::SetLocal | Opcode::GetLocal | Opcode::Call | Opcode::BuiltinFunc => {
+                Some(vec![1])
+            }
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -215,7 +219,10 @@ impl Opcode {
             | Opcode::SetLocal
             | Opcode::GetLocal
             | Opcode::Call
-            | Opcode::Hash => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 1/2
+            | Opcode::Hash
+            | Opcode::BuiltinFunc => {
+                self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize
+            } // expensive way to say 1,2
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
