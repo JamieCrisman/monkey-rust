@@ -50,6 +50,7 @@ pub enum Expression {
     Func {
         params: Vec<Ident>,
         body: BlockStatement,
+        name: String,
     },
     Call {
         func: Box<Expression>,
@@ -88,7 +89,11 @@ impl fmt::Display for Expression {
                 //                    write!(f, "if ({}) {{\n\t{}\n}}", condition, consequence)
                 //                }
             }
-            Self::Func { params: _, body: _ } => {
+            Self::Func {
+                params: _,
+                body: _,
+                name: _,
+            } => {
                 write!(f, "Todo")
             }
             Self::Call { func: _, args: _ } => {

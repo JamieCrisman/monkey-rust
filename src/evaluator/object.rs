@@ -16,7 +16,7 @@ pub enum Object {
     Bool(bool),
     Array(Vec<Object>),
     Hash(HashMap<Object, Object>),
-    Func(Vec<Ident>, BlockStatement, Rc<RefCell<Env>>),
+    Func(Vec<Ident>, BlockStatement, Rc<RefCell<Env>>, String),
     Builtin(i32, BuiltInFunc),
     Null,
     ReturnValue(Box<Object>),
@@ -25,6 +25,10 @@ pub enum Object {
         instructions: Instructions,
         num_locals: i32,
         num_parameters: i32,
+    },
+    Closure {
+        Fn: Box<Object>, // technically specifically ObjectCompiledFunction
+        Free: Vec<Object>,
     },
 }
 
@@ -36,7 +40,7 @@ impl Object {
             Object::Bool(_) => ObjectType::Bool,
             Object::Array(_) => ObjectType::Array,
             Object::Hash(_) => ObjectType::Hash,
-            Object::Func(_, _, _) => ObjectType::Func,
+            Object::Func(_, _, _, _) => ObjectType::Func,
             Object::Builtin(_, _) => ObjectType::Builtin,
             Object::Null => ObjectType::Null,
             Object::ReturnValue(_) => ObjectType::ReturnValue,
@@ -46,6 +50,7 @@ impl Object {
                 num_locals: _,
                 num_parameters: _,
             } => ObjectType::CompiledFunction,
+            Object::Closure { Fn: _, Free: _ } => ObjectType::Closure,
         }
     }
 }
@@ -63,6 +68,7 @@ pub enum ObjectType {
     ReturnValue,
     Error,
     CompiledFunction,
+    Closure,
 }
 
 impl fmt::Display for Object {
@@ -93,7 +99,7 @@ impl fmt::Display for Object {
                 }
                 write!(f, "{{{}}}", result)
             }
-            Object::Func(ref params, _, _) => {
+            Object::Func(ref params, _, _, _) => {
                 let mut result = String::new();
                 for (i, Ident(ref s)) in params.iter().enumerate() {
                     if i < 1 {
@@ -102,12 +108,13 @@ impl fmt::Display for Object {
                         result.push_str(&format!(", {}", s));
                     }
                 }
-                write!(f, "fn({}) {{ ... }}", result)
+                write!(f, "{}({}) {{ ... }}", "func", result)
             }
             Object::Builtin(_, _) => write!(f, "[builtin function]"),
             Object::Null => write!(f, "null"),
             Object::ReturnValue(ref value) => write!(f, "{}", value),
             Object::Error(ref value) => write!(f, "{}", value),
+            Object::Closure { Fn: _, Free: _ } => write!(f, "Closure"),
             Object::CompiledFunction {
                 instructions: _,
                 num_locals,

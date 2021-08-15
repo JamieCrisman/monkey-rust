@@ -1,4 +1,5 @@
 mod frame;
+use core::num;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::{borrow::Borrow, collections::HashMap, ops::Deref};
@@ -48,7 +49,7 @@ pub struct VM {
 
 impl VM {
     pub fn new_with_global_store(bytecode: Bytecode, g: Rc<RefCell<Vec<Object>>>) -> Self {
-        let frames = vec![Frame::new(bytecode.instructions.clone(), 0, 0)];
+        let frames = vec![Frame::new(bytecode.instructions.clone(), 0, 0, vec![], 0)];
         // frames[0].ip += 1;
         Self {
             // instructions: bytecode.instructions.clone(),
@@ -306,11 +307,85 @@ impl VM {
                         .clone() as i64;
                     self.set_ip((ip + 1) as i64);
 
-                    let def = self.builtins.get(built_index as usize).unwrap();
-                    self.push(def.func.clone())?;
+                    let def = self
+                        .builtins
+                        .get(built_index as usize)
+                        .unwrap()
+                        .func
+                        .clone();
+                    self.push(def)?;
+                }
+                Opcode::Closure => {
+                    let buff = [
+                        *cur_instructions.data.get(ip + 1).expect("expected byte"),
+                        *cur_instructions.data.get(ip + 2).expect("expected byte"),
+                    ];
+                    let const_index = u16::from_be_bytes(buff);
+                    let num_free = cur_instructions
+                        .data
+                        .get(ip + 3)
+                        .expect("expected byte")
+                        .clone() as i64;
+                    self.set_ip((ip + 3) as i64);
+                    self.push_closure(const_index, num_free)?;
+                }
+                Opcode::GetFree => {
+                    let free_ind = cur_instructions
+                        .data
+                        .get(ip + 1)
+                        .expect("expected byte")
+                        .clone() as i64;
+                    self.set_ip((ip + 1) as i64);
+                    let var = self
+                        .current_frame()
+                        .free
+                        .get(free_ind as usize)
+                        .expect("expected a variable to exist")
+                        .clone();
+                    self.push(var)?;
+                }
+                Opcode::CurrentClosure => {
+                    let cur_frame = self.current_frame();
+                    let obj = Object::Closure {
+                        Free: cur_frame.free.clone(),
+                        Fn: Box::new(Object::CompiledFunction {
+                            instructions: cur_frame.instr.clone(),
+                            num_locals: cur_frame.num_locals,
+                            num_parameters: cur_frame.num_args as i32,
+                        }),
+                    };
+                    self.push(obj)?;
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn push_closure(&mut self, const_index: u16, num_free: i64) -> Result<(), VMError> {
+        let constant = self.constants.get(const_index as usize);
+        let function = if let Some(obj) = constant {
+            match obj.clone() {
+                Object::CompiledFunction {
+                    instructions: _,
+                    num_locals: _,
+                    num_parameters: _,
+                } => obj,
+                _ => return Err(VMError::Reason("Expected compiled function".to_string())),
+            }
+        } else {
+            return Err(VMError::Reason("Expected constant".to_string()));
+        };
+        let mut free: Vec<Object> = vec![];
+        for i in 0..num_free {
+            free.push(self.stack[(self.sp - num_free as usize) + (i as usize)].clone());
+        }
+        let cl = Object::Closure {
+            Fn: Box::new(function.to_owned()),
+            Free: free,
+        };
+        self.sp = self.sp - num_free as usize;
+        self.push(cl)?;
 
         Ok(())
     }
@@ -339,15 +414,61 @@ impl VM {
                 }
                 self.execute_builtin(builtin_func, args)?;
             }
-            something => {
+            Object::Closure { Fn, Free } => {
+                let (instructions, num_locals, num_parameters) = match *Fn {
+                    Object::CompiledFunction {
+                        instructions,
+                        num_locals,
+                        num_parameters,
+                    } => (instructions, num_locals, num_parameters),
+                    something_else => {
+                        return Err(VMError::Reason(format!(
+                            "expected function, but got {:?}({})",
+                            something_else.object_type(),
+                            something_else
+                        )))
+                    }
+                };
+                if num_parameters != -1 && num_parameters != args as i32 {
+                    return Err(VMError::Reason(format!(
+                        "wrong number of arguments: want {} but got {}",
+                        num_parameters, args,
+                    )));
+                }
+                self.execute_closure(num_parameters as i64, instructions, num_locals, Free)?;
+            }
+            something_else => {
                 return Err(VMError::Reason(format!(
                     "expected function, but got {:?}({})",
-                    something.object_type(),
-                    something
+                    something_else.object_type(),
+                    something_else
                 )));
             }
         };
 
+        Ok(())
+    }
+
+    fn execute_closure(
+        &mut self,
+        num_args: i64,
+        instructions: Instructions,
+        num_locals: i32,
+        free: Vec<Object>,
+    ) -> Result<(), VMError> {
+        let new_frame = Frame::new(
+            instructions,
+            num_locals,
+            self.sp as i64 - num_args,
+            free,
+            num_args,
+        );
+        let bp = new_frame.base_pointer;
+        self.push_frame(new_frame);
+        for _i in 0..num_locals {
+            self.push(Object::Null)?;
+        }
+        self.sp = (bp + (num_locals as i64)) as usize;
         Ok(())
     }
 
@@ -369,7 +490,13 @@ impl VM {
         instructions: Instructions,
         num_locals: i32,
     ) -> Result<(), VMError> {
-        let new_frame = Frame::new(instructions, num_locals, self.sp as i64 - args);
+        let new_frame = Frame::new(
+            instructions,
+            num_locals,
+            self.sp as i64 - args,
+            vec![],
+            args,
+        );
         let bp = new_frame.base_pointer;
         self.push_frame(new_frame);
         for _i in 0..num_locals {
@@ -1079,6 +1206,152 @@ mod tests {
                 ])),
                 input: "[1+2,3*4,5+6]".to_string(),
             },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_closures() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(99)),
+                input: "let cl = fn(a) {fn() {a}}; let closure = cl(99); closure();".to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(14)),
+                input: r#"
+                let newAdderOuter = fn(a, b) {
+                    let c = a + b;
+                    fn(d) {
+                        let e = d + c;
+                        fn(f) { e + f;};
+                    };
+                };
+                let newAdderInner = newAdderOuter(1,2);
+                let adder = newAdderInner(3);
+                adder(8);
+                "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(14)),
+                input: r#"
+                let a = 1;
+                let newAdderOuter = fn(b) {
+                    fn(c) {
+                        fn(d) {a + b + c + d};
+                    };
+                };
+                let newAdderInner = newAdderOuter(2);
+                let adder = newAdderInner(3);
+                adder(8);
+                "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(99)),
+                input: r#"
+                let newClosure = fn(a,b) {
+                    let one = fn() {a;};
+                    let two = fn() {b;};
+                    fn() { one() + two()};
+                };
+                let closure = newClosure(9, 90);
+                closure();
+                "#
+                .to_string(),
+            },
+            // VMTestCase {
+            //     expected_top: Some(Object::Int(3)),
+            //     input: "let one = fn() { 1; }; let two = fn() {2}; one() + two();".to_string(),
+            // },
+        ];
+
+        run_vm_test(tests);
+    }
+
+    #[test]
+    fn test_recursive() {
+        let tests: Vec<VMTestCase> = vec![
+            VMTestCase {
+                expected_top: Some(Object::Int(0)),
+                input: r#"
+                let countDown = fn(x) {
+                    if (x == 0) {
+                        return 0;
+                    } else {
+                        countDown(x - 1);
+                    }
+                };
+                countDown(1);
+                "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(0)),
+                input: r#"
+                let countDown = fn(x) {
+                    if (x == 0) {
+                        return 0;
+                    } else {
+                        countDown(x - 1);
+                    }
+                };
+                let wrapper = fn() {countDown(1)};
+                wrapper();
+                "#
+                .to_string(),
+            },
+            VMTestCase {
+                expected_top: Some(Object::Int(0)),
+                input: r#"
+                let wrapper = fn() {
+                    let countDown = fn(x) {
+                        if (x == 0) {
+                            return 0;
+                        } else {
+                            countDown(x - 1);
+                        }
+                    };
+                    countDown(1);
+                };
+                wrapper();
+                "#
+                .to_string(),
+            },
+            // VMTestCase {
+            //     expected_top: Some(Object::Int(14)),
+            //     input: r#"
+            //     let a = 1;
+            //     let newAdderOuter = fn(b) {
+            //         fn(c) {
+            //             fn(d) {a + b + c + d};
+            //         };
+            //     };
+            //     let newAdderInner = newAdderOuter(2);
+            //     let adder = newAdderInner(3);
+            //     adder(8);
+            //     "#
+            //     .to_string(),
+            // },
+            // VMTestCase {
+            //     expected_top: Some(Object::Int(99)),
+            //     input: r#"
+            //     let newClosure = fn(a,b) {
+            //         let one = fn() {a;};
+            //         let two = fn() {b;};
+            //         fn() { one() + two()};
+            //     };
+            //     let closure = newClosure(9, 90);
+            //     closure();
+            //     "#
+            //     .to_string(),
+            // },
+            // VMTestCase {
+            //     expected_top: Some(Object::Int(3)),
+            //     input: "let one = fn() { 1; }; let two = fn() {2}; one() + two();".to_string(),
+            // },
         ];
 
         run_vm_test(tests);

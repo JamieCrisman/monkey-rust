@@ -124,6 +124,9 @@ pub enum Opcode {
     GetLocal = 24,
     SetLocal = 25,
     BuiltinFunc = 26,
+    Closure = 27,
+    GetFree = 28,
+    CurrentClosure = 29,
 }
 
 impl From<u8> for Opcode {
@@ -156,6 +159,9 @@ impl From<u8> for Opcode {
             24 => return Opcode::GetLocal,
             25 => return Opcode::SetLocal,
             26 => return Opcode::BuiltinFunc,
+            27 => return Opcode::Closure,
+            28 => return Opcode::GetFree,
+            29 => return Opcode::CurrentClosure,
             _ => panic!("Unknown value: {}", orig),
         };
     }
@@ -186,9 +192,12 @@ impl Opcode {
             | Opcode::SetGlobal
             | Opcode::Array
             | Opcode::Hash => Some(vec![2]),
-            Opcode::SetLocal | Opcode::GetLocal | Opcode::Call | Opcode::BuiltinFunc => {
-                Some(vec![1])
-            }
+            Opcode::SetLocal
+            | Opcode::GetLocal
+            | Opcode::Call
+            | Opcode::BuiltinFunc
+            | Opcode::GetFree => Some(vec![1]),
+            Opcode::Closure => Some(vec![2, 1]),
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -204,7 +213,8 @@ impl Opcode {
             | Opcode::Null
             | Opcode::Index
             | Opcode::ReturnValue
-            | Opcode::Return => None,
+            | Opcode::Return
+            | Opcode::CurrentClosure => None,
         }
     }
 
@@ -220,9 +230,9 @@ impl Opcode {
             | Opcode::GetLocal
             | Opcode::Call
             | Opcode::Hash
-            | Opcode::BuiltinFunc => {
-                self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize
-            } // expensive way to say 1,2
+            | Opcode::Closure
+            | Opcode::BuiltinFunc
+            | Opcode::GetFree => self.widths().unwrap().iter().fold(0, |acc, v| acc + v) as usize, // expensive way to say 1,2
             Opcode::Add
             | Opcode::Divide
             | Opcode::Subtract
@@ -238,7 +248,8 @@ impl Opcode {
             | Opcode::Null
             | Opcode::Index
             | Opcode::ReturnValue
-            | Opcode::Return => 0,
+            | Opcode::Return
+            | Opcode::CurrentClosure => 0,
         }
     }
 }
@@ -334,6 +345,14 @@ mod tests {
                 },
                 None,
             ),
+            (
+                Opcode::Closure,
+                vec![65534, 255],
+                Instructions {
+                    data: vec![Opcode::Closure as u8, 255, 254, 255],
+                },
+                None,
+            ),
         ];
 
         for test in tests {
@@ -366,12 +385,13 @@ mod tests {
                 make(Opcode::False, None).unwrap(),
                 make(Opcode::Pop, None).unwrap(),
                 make(Opcode::GetLocal, Some(vec![1])).unwrap(),
+                make(Opcode::Closure, Some(vec![65534, 255])).unwrap(),
             ],
         };
 
         let result = format!("{}", instr);
         assert_eq!(
-            "0000 Add\n0001 Constant 65534\n0004 Constant 1\n0007 Constant 2\n0010 True\n0011 False\n0012 Pop\n0013 GetLocal 1\n",
+            "0000 Add\n0001 Constant 65534\n0004 Constant 1\n0007 Constant 2\n0010 True\n0011 False\n0012 Pop\n0013 GetLocal 1\n0015 Closure 65534 255\n",
             result
         );
     }

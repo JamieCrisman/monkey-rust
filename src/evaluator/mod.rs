@@ -140,8 +140,8 @@ impl Evaluator {
                 consequence,
                 alternative,
             } => self.eval_if_expression(*condition, consequence, alternative),
-            Expression::Func { params, body } => {
-                Some(Object::Func(params, body, Rc::clone(&self.env)))
+            Expression::Func { params, body, name } => {
+                Some(Object::Func(params, body, Rc::clone(&self.env), name))
             }
             Expression::Call { func, args } => Some(self.eval_call_expression(func, args)),
             Expression::Blank => None,
@@ -336,7 +336,7 @@ impl Evaluator {
             .collect::<Vec<_>>();
 
         let (params, body, env) = match self.eval_expression(*func) {
-            Some(Object::Func(params, body, env)) => (params, body, env),
+            Some(Object::Func(params, body, env, _)) => (params, body, env),
             Some(Object::Builtin(expected_param_num, f)) => {
                 if expected_param_num < 0 || expected_param_num == args.len() as i32 {
                     return f(args);
@@ -670,6 +670,7 @@ identity(100);
                     Box::new(Expression::Literal(Literal::Int(2))),
                 ))],
                 Rc::new(RefCell::new(Env::from(new_builtins()))),
+                String::from("")
             )),
             eval(input),
         );

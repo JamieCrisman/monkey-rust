@@ -81,7 +81,18 @@ impl Parser {
         self.next_token();
 
         let expression = match self.parse_expression(Precedence::Lowest) {
-            Some(expr) => expr,
+            Some(expr) => match expr {
+                Expression::Func {
+                    params,
+                    body,
+                    name: _,
+                } => Some(Expression::Func {
+                    params,
+                    body,
+                    name: ident.0.clone(),
+                }),
+                _ => Some(expr),
+            },
             None => return None,
         };
 
@@ -89,7 +100,7 @@ impl Parser {
             self.next_token();
         }
 
-        Some(Statement::Let(ident, expression))
+        Some(Statement::Let(ident, expression.unwrap()))
     }
 
     fn parse_return_statement(&mut self) -> Option<Statement> {
@@ -202,6 +213,7 @@ impl Parser {
         Some(Expression::Func {
             params,
             body: self.parse_block_statement(),
+            name: String::from(""),
         })
     }
 
@@ -702,18 +714,21 @@ mod tests {
                     Box::new(Expression::Ident(Ident(String::from("x")))),
                     Box::new(Expression::Ident(Ident(String::from("y")))),
                 ))],
+                name: String::from(""),
             }),
             Statement::Expression(Expression::Func {
                 params: vec![Ident(String::from("x"))],
                 body: vec![Statement::Expression(Expression::Ident(Ident(
                     String::from("x"),
                 )))],
+                name: String::from(""),
             }),
             Statement::Expression(Expression::Func {
                 params: vec![],
                 body: vec![Statement::Expression(Expression::Ident(Ident(
                     String::from("x"),
                 )))],
+                name: String::from(""),
             }),
         ];
         for i in 0..program.len() {
