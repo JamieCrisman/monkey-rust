@@ -1,3 +1,3 @@
 # Monkey Rust
 
-Followed some ideas from some of the other rust monkey implementations as my rust is weak.. Stumbling through the VM/Compiler implementation.
+This follows the lovely [Writing an Interpreter in Go](https://interpreterbook.com/) and [Writing a Compiler in Go](https://compilerbook.com/) books. I did this in to practice Rust while learning more about interpreters/compilers/VMs. Many ideas following what some of the other people have already made. Though I hadn't seen the second book done in Rust yet. The compiler/vm is done, but likely not very efficient. I'd love PRs with explanations on how to handle things better. 
